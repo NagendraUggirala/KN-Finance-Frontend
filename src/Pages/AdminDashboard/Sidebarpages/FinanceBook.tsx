@@ -1,5 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Printer, Search, Plus, Edit2, Save, X, Trash2 } from 'lucide-react';
+import { 
+  Printer, 
+  Search, 
+  Plus, 
+  Edit2, 
+  Save, 
+  X, 
+  Trash2, 
+  FileSpreadsheet, 
+  Download 
+} from 'lucide-react';
+import * as XLSX from 'xlsx';
 import type { Employee, FinanceRecord } from '../types';
 import {
   transliterateEnglishToTelugu,
@@ -71,8 +82,8 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
   const getPayment = (row: LedgerRowData, colIdx: number): LedgerPayment => {
     const p = row.payments?.[colIdx];
     if (!p) return { date: '', amount: '' };
-    if (typeof p === 'string') return { date: '', amount: p };
-    return { date: p.date || '', amount: p.amount || '' };
+    if (typeof p === 'object' && p !== null) return { date: p.date || '', amount: p.amount || '' };
+    return { date: '', amount: String(p || '') };
   };
 
   // Start Edit Session
@@ -147,7 +158,7 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
       const newPayments: { [key: number]: LedgerPayment } = {};
       Object.entries(row.payments || {}).forEach(([kStr, val]) => {
         const k = parseInt(kStr);
-        const payObj = typeof val === 'object' && val !== null ? val : { date: '', amount: val as string };
+        const payObj: LedgerPayment = typeof val === 'object' && val !== null ? val : { date: '', amount: String(val || '') };
         if (k < colIdx) {
           newPayments[k] = payObj;
         } else if (k > colIdx) {
@@ -320,9 +331,9 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
       // Extract payments list
       const paymentsList = Object.entries(row.payments || {}).map(([colIdxStr, payVal]) => {
         const colIdx = parseInt(colIdxStr);
-        const payObj = typeof payVal === 'object' && payVal !== null
+        const payObj: LedgerPayment = typeof payVal === 'object' && payVal !== null
           ? payVal
-          : { date: dateColumns[colIdx] || '08-08', amount: (payVal as string) || '' };
+          : { date: dateColumns[colIdx] || '08-08', amount: String(payVal || '') };
 
         const amtNum = parseFloat((payObj.amount || '').replace(/,/g, '')) || 0;
         const dateStr = payObj.date || dateColumns[colIdx] || '08-08';
@@ -408,7 +419,7 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
           : (tempDateColumns[colIdx] || '');
         const existingAmt = typeof currentPay === 'object' && currentPay !== null
           ? currentPay.amount
-          : (typeof currentPay === 'string' ? currentPay : '');
+          : (currentPay ? String(currentPay) : '');
 
         return {
           ...r,
@@ -448,14 +459,6 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
       return r;
     });
     setTempRows(updated);
-  };
-
-  // Handle date header edits
-  const handleHeaderChange = (colIdx: number, value: string) => {
-    if (!isEditing) return;
-    const updatedCols = [...tempDateColumns];
-    updatedCols[colIdx] = value;
-    setTempDateColumns(updatedCols);
   };
 
   // Add row inside table
@@ -499,12 +502,7 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
     const rowPayments = row.payments || {};
     currentDateColumns.forEach((_, colIdx) => {
       const pay = rowPayments[colIdx];
-      let val = '';
-      if (typeof pay === 'object' && pay !== null) {
-        val = pay.amount || '';
-      } else if (typeof pay === 'string') {
-        val = pay;
-      }
+      const val = typeof pay === 'object' && pay !== null ? pay.amount || '' : String(pay || '');
       const num = parseFloat(val.replace(/,/g, '')) || 0;
       totalPaid += num;
     });
@@ -531,6 +529,215 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
       (row.item || '').toLowerCase().includes(term)
     );
   });
+
+  // Export Finance Book to genuine Excel spreadsheet (.xlsx)
+  const handleExportExcel = () => {
+    try {
+      const dataToExport = filteredRows.length > 0 ? filteredRows : currentRows;
+      if (dataToExport.length === 0) {
+        onShowToast('No ledger records available to export.');
+        return;
+      }
+
+      // 1. Build Header Matrix
+      const headers: string[] = [
+        'S.No (వ.సం.)',
+        'Borrow Date (తేది)',
+        'Telugu Name (ఆసామి పేరు - తెలుగు)',
+        'English Name (పేరు - English)',
+        'Product / Item (వస్తువు)',
+        'Principal Amount (సొమ్ము ₹)',
+      ];
+
+      // Add dynamic installment headers
+      currentDateColumns.forEach((dateHeader, idx) => {
+        headers.push(`Installment ${idx + 1} (${dateHeader}) Date`);
+        headers.push(`Installment ${idx + 1} (${dateHeader}) Amount (₹)`);
+      });
+
+      headers.push('Total Paid (మొత్తం వసూలు ₹)');
+      headers.push('Remaining Balance (బాకీ సొమ్ము ₹)');
+      headers.push('Status (ముగింపు)');
+
+      // 2. Build Data Rows & Accumulate Column Sums
+      let grandTotalPrincipal = 0;
+      const installmentTotals: number[] = new Array(currentDateColumns.length).fill(0);
+      let grandTotalPaid = 0;
+      let grandTotalRemaining = 0;
+
+      const rowsData: any[][] = [];
+
+      dataToExport.forEach((row) => {
+        const { totalPaid, remaining, amount } = getRowTotals(row);
+        grandTotalPrincipal += amount;
+        grandTotalPaid += totalPaid;
+        grandTotalRemaining += remaining;
+
+        const rowValues: any[] = [
+          parseInt(row.sNo) || row.sNo,
+          row.date || '',
+          row.nameTelugu || row.name || '',
+          row.nameEnglish || '',
+          row.item || '',
+          amount,
+        ];
+
+        // Fill installment date & amount
+        currentDateColumns.forEach((_, colIdx) => {
+          const pay = getPayment(row, colIdx);
+          const payAmt = parseFloat((pay.amount || '').replace(/,/g, '')) || 0;
+          installmentTotals[colIdx] += payAmt;
+          rowValues.push(pay.date || '');
+          rowValues.push(payAmt > 0 ? payAmt : (pay.amount ? pay.amount : ''));
+        });
+
+        rowValues.push(totalPaid);
+        rowValues.push(remaining);
+        rowValues.push(row.isClosed ? 'Closed' : 'Active');
+
+        rowsData.push(rowValues);
+      });
+
+      // 3. Build Summary/Totals Row
+      const totalsRow: any[] = [
+        'TOTAL / మొత్తం',
+        '',
+        '',
+        '',
+        `${dataToExport.length} Borrowers`,
+        grandTotalPrincipal,
+      ];
+
+      currentDateColumns.forEach((_, colIdx) => {
+        totalsRow.push('');
+        totalsRow.push(installmentTotals[colIdx]);
+      });
+
+      totalsRow.push(grandTotalPaid);
+      totalsRow.push(grandTotalRemaining);
+      totalsRow.push('');
+
+      // 4. Combine into final sheet matrix
+      const titleRow = ['KN FINANCE - FINANCE BOOK LEDGER (శాఖ లెడ్జర్ రికార్డులు)'];
+      const subTitleRow = [
+        `Generated: ${new Date().toLocaleDateString('en-IN')} | Operator: ${userName || 'Admin'} | Total Records: ${dataToExport.length}`
+      ];
+      const emptyRow: any[] = [];
+
+      const fullMatrix = [
+        titleRow,
+        subTitleRow,
+        emptyRow,
+        headers,
+        ...rowsData,
+        emptyRow,
+        totalsRow
+      ];
+
+      // 5. Create worksheet & calculate column widths
+      const ws = XLSX.utils.aoa_to_sheet(fullMatrix);
+
+      // Auto-fit column widths
+      const colWidths = headers.map((h, colIndex) => {
+        let maxLen = h.length;
+        fullMatrix.forEach((r) => {
+          if (r && r[colIndex] !== undefined && r[colIndex] !== null) {
+            const cellLen = String(r[colIndex]).length;
+            if (cellLen > maxLen) maxLen = cellLen;
+          }
+        });
+        return { wch: Math.min(Math.max(maxLen + 3, 12), 40) };
+      });
+      ws['!cols'] = colWidths;
+
+      // 6. Create Workbook & Download
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Finance Ledger');
+
+      const dateStamp = new Date().toISOString().split('T')[0];
+      XLSX.writeFile(wb, `KN_Finance_Book_Ledger_${dateStamp}.xlsx`);
+
+      onShowToast(`Excel sheet exported successfully! (${dataToExport.length} records) 📊`);
+    } catch (err) {
+      console.error('Failed to export Excel file:', err);
+      onShowToast('Error exporting Excel sheet. Please try again.');
+    }
+  };
+
+  // Export current page/filtered records as clean CSV file
+  const handleExportCSV = () => {
+    try {
+      const dataToExport = filteredRows.length > 0 ? filteredRows : currentRows;
+      if (dataToExport.length === 0) {
+        onShowToast('No ledger records available to export.');
+        return;
+      }
+
+      // Headers
+      const headers = [
+        'S.No',
+        'Borrow Date',
+        'Telugu Name',
+        'English Name',
+        'Product/Item',
+        'Principal Amount',
+      ];
+
+      currentDateColumns.forEach((col, idx) => {
+        headers.push(`Installment ${idx + 1} (${col}) Date`);
+        headers.push(`Installment ${idx + 1} (${col}) Amount`);
+      });
+
+      headers.push('Total Paid', 'Remaining Balance', 'Status');
+
+      // Rows
+      const csvLines: string[] = [
+        headers.map(h => `"${h.replace(/"/g, '""')}"`).join(',')
+      ];
+
+      dataToExport.forEach(row => {
+        const { totalPaid, remaining, amount } = getRowTotals(row);
+        const line = [
+          `"${row.sNo}"`,
+          `"${row.date}"`,
+          `"${(row.nameTelugu || row.name || '').replace(/"/g, '""')}"`,
+          `"${(row.nameEnglish || '').replace(/"/g, '""')}"`,
+          `"${(row.item || '').replace(/"/g, '""')}"`,
+          `"${amount}"`,
+        ];
+
+        currentDateColumns.forEach((_, colIdx) => {
+          const pay = getPayment(row, colIdx);
+          line.push(`"${pay.date || ''}"`);
+          line.push(`"${pay.amount || ''}"`);
+        });
+
+        line.push(`"${totalPaid}"`);
+        line.push(`"${remaining}"`);
+        line.push(`"${row.isClosed ? 'Closed' : 'Active'}"`);
+
+        csvLines.push(line.join(','));
+      });
+
+      // UTF-8 BOM for Telugu character rendering in Excel/CSV viewers
+      const csvContent = '\uFEFF' + csvLines.join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const dateStamp = new Date().toISOString().split('T')[0];
+      link.setAttribute('href', url);
+      link.setAttribute('download', `KN_Finance_Page_Data_${dateStamp}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      onShowToast(`Exported page data as CSV successfully! (${dataToExport.length} records) 📁`);
+    } catch (err) {
+      console.error('Failed to export CSV:', err);
+      onShowToast('Error exporting CSV file. Please try again.');
+    }
+  };
 
   // Cell keyboard navigation handler
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, filteredRowIdx: number, colIndex: number) => {
@@ -577,6 +784,50 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
       }
     }
   };
+
+  // Dynamic Print Styles & Column Width Percentages for Guaranteed 100% Page Fit
+  const colCount = currentDateColumns.length;
+  const isManyCols = colCount > 6;
+  const isVeryManyCols = colCount > 10;
+  const isExtremeCols = colCount > 15;
+
+  const printFontSizeClass = isExtremeCols
+    ? 'text-[6.5px]'
+    : isVeryManyCols
+      ? 'text-[7.5px]'
+      : isManyCols
+        ? 'text-[8.5px]'
+        : 'text-[10px]';
+
+  const printHeaderFontClass = isExtremeCols
+    ? 'text-[7px]'
+    : isVeryManyCols
+      ? 'text-[8px]'
+      : isManyCols
+        ? 'text-[9px]'
+        : 'text-[10.5px]';
+
+  const printCellPadding = isExtremeCols
+    ? 'px-0.5 py-0.5'
+    : isVeryManyCols
+      ? 'px-1 py-0.5'
+      : isManyCols
+        ? 'px-1 py-1'
+        : 'px-1.5 py-1.5';
+
+  // Base Column Width Percentages (Total will always equal 100% exactly)
+  const sNoPct = isVeryManyCols ? 2.5 : 3.0;
+  const datePct = isVeryManyCols ? 4.0 : 4.5;
+  const teNamePct = isVeryManyCols ? 9.0 : isManyCols ? 11.0 : 13.5;
+  const enNamePct = isVeryManyCols ? 8.5 : isManyCols ? 10.0 : 12.5;
+  const itemPct = isVeryManyCols ? 7.0 : isManyCols ? 8.0 : 9.5;
+  const amountPct = isVeryManyCols ? 6.0 : isManyCols ? 7.0 : 8.5;
+  const totalPaidPct = isVeryManyCols ? 6.5 : isManyCols ? 7.5 : 9.0;
+  const remainingPct = isVeryManyCols ? 6.5 : isManyCols ? 7.5 : 9.0;
+  const statusPct = isVeryManyCols ? 4.0 : isManyCols ? 4.5 : 5.5;
+
+  const fixedTotalPct = sNoPct + datePct + teNamePct + enNamePct + itemPct + amountPct + totalPaidPct + remainingPct + statusPct;
+  const installmentColPct = colCount > 0 ? (100 - fixedTotalPct) / colCount : 0;
 
   return (
     <div className="relative space-y-6">
@@ -704,89 +955,73 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
         }
 
         @media print {
-          body, html, #root {
+          body, html, #root, #root > div, main {
             background: #fff !important;
             color: #000 !important;
             overflow: visible !important;
             height: auto !important;
+            max-height: none !important;
+            min-height: 0 !important;
             width: 100% !important;
+            position: static !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
           
-          aside, nav, header, .no-print, button, select, .dashboard-sidebar, .dashboard-navbar {
+          aside, nav, header, .no-print, button, select, input, .dashboard-sidebar, .dashboard-navbar {
             display: none !important;
           }
 
-          .desk-bg {
-            background: #fff !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: visible !important;
-            height: auto !important;
+          .screen-only-book {
+            display: none !important;
           }
 
-          .book-stacked-shadow {
-            box-shadow: none !important;
-          }
-
-          .book-spread {
-            transform: none !important;
-            box-shadow: none !important;
-            border: 2px solid #cbd5e1 !important;
-            background: #faf8f5 !important;
+          .print-only-ledger {
+            display: block !important;
             width: 100% !important;
             max-width: 100% !important;
-            min-width: auto !important;
-            overflow: visible !important;
-            page-break-inside: avoid;
-            display: flex !important;
-            flex-direction: row !important;
-          }
-
-          .left-page-curl {
-            width: 60% !important;
-            background: #faf8f5 !important;
-            border-radius: 0 !important;
-            box-shadow: none !important;
-            padding-right: 6px !important;
-          }
-
-          .right-page-curl {
-            width: 40% !important;
-            background: #faf8f5 !important;
-            border-radius: 0 !important;
-            box-shadow: none !important;
-            padding-left: 6px !important;
-          }
-
-          .book-binding-gutter {
-            background: linear-gradient(to right, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.02) 40%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.02) 60%, rgba(0,0,0,0.1) 100%) !important;
-            border-left: 1px solid rgba(0,0,0,0.15) !important;
-            border-right: 1px solid rgba(0,0,0,0.15) !important;
-          }
-
-          .ledger-cell-input {
+            background: #fff !important;
             color: #000 !important;
-            font-size: 10px !important;
-            padding: 1px !important;
+            page-break-inside: auto;
           }
 
-          th, td {
-            font-size: 10px !important;
-            padding: 2px !important;
+          .print-table {
+            width: 100% !important;
+            max-width: 100% !important;
+            table-layout: fixed !important;
+            border-collapse: collapse !important;
+            page-break-inside: auto;
+          }
+
+          .print-table tr {
+            page-break-inside: avoid;
+            page-break-after: auto;
+          }
+
+          .print-table th, .print-table td {
+            border: 1px solid #475569 !important;
+            color: #000 !important;
+            overflow: hidden !important;
+            word-break: break-word !important;
+          }
+
+          .print-table th {
+            background-color: #f1f5f9 !important;
+            font-weight: bold !important;
           }
 
           @page {
             size: landscape;
-            margin: 0.5cm;
+            margin: 0.4cm;
           }
         }
       `}} />
 
       {/* 1. External Control Panel above the book (Hidden in print) */}
-      <div className="no-print flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/90 backdrop-blur-md text-slate-200 p-4 rounded-xl border border-slate-800 shadow-xl">
+      <div className="no-print flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-slate-900/90 backdrop-blur-md text-slate-200 p-4 rounded-xl border border-slate-800 shadow-xl">
 
         {/* Search filter input */}
-        <div className="relative w-full md:w-80">
+        <div className="relative w-full xl:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
             type="text"
@@ -797,25 +1032,47 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
           />
         </div>
 
-        {/* Action Controls */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Action Controls - Single Row */}
+        <div className="flex items-center flex-wrap sm:flex-nowrap gap-2 overflow-x-auto pb-1 sm:pb-0">
           {!isEditing ? (
             <>
-              {/* Edit Ledger Button */}
+              {/* 1. Edit Ledger Button */}
               <button
                 onClick={handleStartEdit}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-amber-650"
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-amber-500/60 whitespace-nowrap"
+                title="Edit ledger entries and columns"
               >
-                <Edit2 className="w-4 h-4 text-amber-100" />
+                <Edit2 className="w-3.5 h-3.5 text-amber-100" />
                 <span>Edit Ledger</span>
               </button>
 
-              {/* Print Button */}
+              {/* 2. Excel Sheet Button */}
+              <button
+                onClick={handleExportExcel}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-emerald-500/50 whitespace-nowrap"
+                title="Export complete book ledger data to Excel spreadsheet (.xlsx)"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
+                <span>Excel Sheet</span>
+              </button>
+
+              {/* 3. Export Page Data Button */}
+              <button
+                onClick={handleExportCSV}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-700 hover:to-blue-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-sky-500/50 whitespace-nowrap"
+                title="Export current page data as CSV"
+              >
+                <Download className="w-3.5 h-3.5 text-sky-200" />
+                <span>Export Page Data</span>
+              </button>
+
+              {/* 4. Print Ledger Button */}
               <button
                 onClick={handlePrint}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-800 hover:to-slate-900 text-slate-200 rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-slate-950"
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-indigo-600 to-slate-800 hover:from-indigo-700 hover:to-slate-900 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-indigo-500/50 whitespace-nowrap"
+                title="Print official finance ledger format"
               >
-                <Printer className="w-4 h-4 text-slate-400" />
+                <Printer className="w-3.5 h-3.5 text-indigo-200" />
                 <span>ప్రింట్ (Print Ledger)</span>
               </button>
             </>
@@ -824,36 +1081,36 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
               {/* Save Changes Button */}
               <button
                 onClick={handleSave}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-teal-800"
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-teal-700 whitespace-nowrap"
               >
-                <Save className="w-4 h-4 text-emerald-200" />
+                <Save className="w-3.5 h-3.5 text-emerald-200" />
                 <span>Save Changes</span>
               </button>
 
               {/* Cancel Button */}
               <button
                 onClick={handleCancel}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-700 hover:to-red-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-red-800"
+                className="flex items-center gap-1.5 px-4 py-2 text-xs bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-700 hover:to-red-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-red-700 whitespace-nowrap"
               >
-                <X className="w-4 h-4 text-red-200" />
+                <X className="w-3.5 h-3.5 text-red-200" />
                 <span>Cancel</span>
               </button>
 
               {/* Add Column */}
               <button
                 onClick={handleAddColumn}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-amber-800"
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-amber-700 whitespace-nowrap"
               >
-                <Plus className="w-4 h-4 text-amber-200" />
+                <Plus className="w-3.5 h-3.5 text-amber-200" />
                 <span>Add Date Column</span>
               </button>
 
               {/* Add Row */}
               <button
                 onClick={handleAddRow}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-teal-800"
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-teal-600 to-cyan-700 hover:from-teal-700 hover:to-cyan-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-teal-700 whitespace-nowrap"
               >
-                <Plus className="w-4 h-4 text-emerald-200" />
+                <Plus className="w-3.5 h-3.5 text-cyan-200" />
                 <span>Add Person Row</span>
               </button>
             </>
@@ -862,7 +1119,8 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
       </div>
 
       {/* 2. Outer Desk Frame containing the Open Book Spread */}
-      <div className="desk-bg flex-1 p-2 md:p-6 lg:p-10 rounded-2xl flex items-start justify-start overflow-x-auto scrollbar-book">
+      <div className="screen-only-book print:hidden">
+        <div className="desk-bg flex-1 p-2 md:p-6 lg:p-10 rounded-2xl flex items-start justify-start overflow-x-auto scrollbar-book">
 
         {/* Book Spread Inner Content */}
         <div
@@ -1125,16 +1383,6 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
                           <span className="text-[10px] text-amber-950 font-bold leading-tight">
                             వాయిదా {dIdx + 1}
                           </span>
-                          <div className="w-full flex items-center justify-center">
-                            <input
-                              type="text"
-                              disabled={!isEditing}
-                              value={currentDateColumns[dIdx] || ''}
-                              onChange={(e) => handleHeaderChange(dIdx, e.target.value)}
-                              placeholder="తేది / వారం"
-                              className="w-full text-center bg-transparent border-none outline-none font-semibold text-[10px] text-slate-600 focus:bg-amber-100/30 disabled:cursor-default leading-tight"
-                            />
-                          </div>
                           <span className="text-[8.5px] text-amber-800/80 font-sans font-bold tracking-tight">
                             తేది | సొమ్ము
                           </span>
@@ -1167,7 +1415,7 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
               </thead>
               <tbody>
                 {filteredRows.map((row, rIdx) => {
-                  const { totalPaid, remaining, target, amount } = getRowTotals(row);
+                  const { totalPaid, target, amount } = getRowTotals(row);
                   return (
                     <tr key={row.id} className={`h-[48px] hover:bg-slate-500/5 transition-colors ${row.isClosed ? 'bg-slate-100/55 opacity-90' : ''}`}>
 
@@ -1319,6 +1567,192 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
           </div>
 
 
+        </div>
+      </div>
+      </div>
+
+      {/* 3. Dedicated High-Definition Print Ledger Layout (Guaranteed 100% Page Fit) */}
+      <div className="print-only-ledger hidden print:block p-2 bg-white text-black font-sans">
+        
+        {/* Print Header */}
+        <div className="border-b-2 border-slate-900 pb-2 mb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-lg font-extrabold tracking-wide uppercase text-slate-900">
+                KN FINANCE (శ్రీ లక్ష్మీ గణపతి ఫైనాన్స్)
+              </h1>
+              <p className="text-[11px] font-bold text-slate-700">
+                Finance Book Ledger Register • శాఖ లెడ్జర్ రికార్డు రిజిస్టర్
+              </p>
+            </div>
+            <div className="text-right text-[9px] text-slate-600 font-mono">
+              <p className="font-bold">Branch #104 (NY Central)</p>
+              <p>Printed on: {new Date().toLocaleString('en-IN')}</p>
+              <p>Operator: {userName || 'Admin'}</p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between mt-2 text-[9px] bg-slate-100 px-2 py-1 rounded border border-slate-300 font-bold">
+            <span>Total Accounts: {filteredRows.length}</span>
+            <span>Active: {filteredRows.filter(r => !r.isClosed).length}</span>
+            <span>Closed: {filteredRows.filter(r => r.isClosed).length}</span>
+            <span>Installment Columns: {colCount}</span>
+            <span>Filter: {searchTerm || 'All Records'}</span>
+          </div>
+        </div>
+
+        {/* Unified Full Table with Guaranteed 100% Page Fit */}
+        <table className={`print-table w-full table-fixed border-collapse ${printFontSizeClass}`}>
+          <colgroup>
+            <col style={{ width: `${sNoPct}%` }} />
+            <col style={{ width: `${datePct}%` }} />
+            <col style={{ width: `${teNamePct}%` }} />
+            <col style={{ width: `${enNamePct}%` }} />
+            <col style={{ width: `${itemPct}%` }} />
+            <col style={{ width: `${amountPct}%` }} />
+            {currentDateColumns.map((_, cIdx) => (
+              <col key={cIdx} style={{ width: `${installmentColPct}%` }} />
+            ))}
+            <col style={{ width: `${totalPaidPct}%` }} />
+            <col style={{ width: `${remainingPct}%` }} />
+            <col style={{ width: `${statusPct}%` }} />
+          </colgroup>
+
+          <thead>
+            <tr className={`bg-slate-200 text-slate-900 font-bold text-center ${printHeaderFontClass}`}>
+              <th className={`border border-slate-700 ${printCellPadding} align-middle`}>
+                వ.సం.<br /><span className="text-[7.5px] font-normal font-sans">S.No</span>
+              </th>
+              <th className={`border border-slate-700 ${printCellPadding} align-middle`}>
+                తేది<br /><span className="text-[7.5px] font-normal font-sans">Date</span>
+              </th>
+              <th className={`border border-slate-700 ${printCellPadding} text-left align-middle`}>
+                ఆసామి పేరు (తెలుగు)<br /><span className="text-[7.5px] font-normal font-sans">Telugu Name</span>
+              </th>
+              <th className={`border border-slate-700 ${printCellPadding} text-left align-middle`}>
+                పేరు (English)<br /><span className="text-[7.5px] font-normal font-sans">English Name</span>
+              </th>
+              <th className={`border border-slate-700 ${printCellPadding} text-left align-middle`}>
+                వస్తువు<br /><span className="text-[7.5px] font-normal font-sans">Product</span>
+              </th>
+              <th className={`border border-slate-700 ${printCellPadding} text-right align-middle`}>
+                సొమ్ము<br /><span className="text-[7.5px] font-normal font-sans">Amount ₹</span>
+              </th>
+              {currentDateColumns.map((cDate, cIdx) => (
+                <th key={cIdx} className={`border border-slate-700 ${printCellPadding} text-center align-middle`}>
+                  {colCount > 8 ? `వా.${cIdx + 1}` : `వాయిదా ${cIdx + 1}`}<br />
+                  <span className="text-[7.5px] font-mono block leading-none">{cDate}</span>
+                </th>
+              ))}
+              <th className={`border border-slate-700 ${printCellPadding} text-right align-middle`}>
+                మొత్తం వసూలు<br /><span className="text-[7.5px] font-normal font-sans">Paid ₹</span>
+              </th>
+              <th className={`border border-slate-700 ${printCellPadding} text-right align-middle`}>
+                బాకీ సొమ్ము<br /><span className="text-[7.5px] font-normal font-sans">Remaining ₹</span>
+              </th>
+              <th className={`border border-slate-700 ${printCellPadding} text-center align-middle`}>
+                స్థితి<br /><span className="text-[7.5px] font-normal font-sans">Status</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRows.map((row, rIdx) => {
+              const { totalPaid, remaining, amount } = getRowTotals(row);
+              return (
+                <tr key={row.id} className={`border-b border-slate-400 ${row.isClosed ? 'bg-slate-50 line-through text-slate-500' : ''}`}>
+                  <td className={`border border-slate-600 ${printCellPadding} text-center font-bold`}>{row.sNo || rIdx + 1}</td>
+                  <td className={`border border-slate-600 ${printCellPadding} text-center font-mono`}>{row.date || '—'}</td>
+                  <td className={`border border-slate-600 ${printCellPadding} font-semibold telugu-font truncate`}>{row.nameTelugu || row.name || '—'}</td>
+                  <td className={`border border-slate-600 ${printCellPadding} font-medium truncate`}>{row.nameEnglish || '—'}</td>
+                  <td className={`border border-slate-600 ${printCellPadding} truncate`}>{row.item || '—'}</td>
+                  <td className={`border border-slate-600 ${printCellPadding} text-right font-bold font-mono`}>₹{amount ? amount.toLocaleString('en-IN') : '0'}</td>
+                  {currentDateColumns.map((_, cIdx) => {
+                    const pay = getPayment(row, cIdx);
+                    return (
+                      <td key={cIdx} className={`border border-slate-600 ${printCellPadding} text-center font-mono`}>
+                        {pay.amount ? (
+                          <div className="leading-none">
+                            <div className="text-[7px] text-slate-500">{pay.date || ''}</div>
+                            <div className="font-bold">₹{pay.amount}</div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className={`border border-slate-600 ${printCellPadding} text-right font-bold font-mono`}>₹{totalPaid.toLocaleString('en-IN')}</td>
+                  <td className={`border border-slate-600 ${printCellPadding} text-right font-bold font-mono ${remaining <= 0 && totalPaid > 0 ? 'text-slate-800' : ''}`}>
+                    ₹{remaining.toLocaleString('en-IN')}
+                  </td>
+                  <td className={`border border-slate-600 ${printCellPadding} text-center font-bold text-[8px] uppercase`}>
+                    {row.isClosed ? 'CLSD' : 'ACT'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            {(() => {
+              let totalPrincipal = 0;
+              let totalPaidAll = 0;
+              let totalRemainingAll = 0;
+              const colSums: number[] = new Array(currentDateColumns.length).fill(0);
+
+              filteredRows.forEach(row => {
+                const { totalPaid, remaining, amount } = getRowTotals(row);
+                totalPrincipal += amount;
+                totalPaidAll += totalPaid;
+                totalRemainingAll += remaining;
+                currentDateColumns.forEach((_, colIdx) => {
+                  const pay = getPayment(row, colIdx);
+                  const payAmt = parseFloat((pay.amount || '').replace(/,/g, '')) || 0;
+                  colSums[colIdx] += payAmt;
+                });
+              });
+
+              return (
+                <tr className="bg-slate-200 font-extrabold text-slate-900 border-t-2 border-slate-800">
+                  <td colSpan={5} className={`border border-slate-700 ${printCellPadding} text-center uppercase tracking-wider font-bold`}>
+                    మొత్తం (TOTAL)
+                  </td>
+                  <td className={`border border-slate-700 ${printCellPadding} text-right font-mono font-extrabold`}>
+                    ₹{totalPrincipal.toLocaleString('en-IN')}
+                  </td>
+                  {colSums.map((sum, sIdx) => (
+                    <td key={sIdx} className={`border border-slate-700 ${printCellPadding} text-center font-mono font-bold`}>
+                      {sum > 0 ? `₹${sum.toLocaleString('en-IN')}` : '₹0'}
+                    </td>
+                  ))}
+                  <td className={`border border-slate-700 ${printCellPadding} text-right font-mono font-extrabold`}>
+                    ₹{totalPaidAll.toLocaleString('en-IN')}
+                  </td>
+                  <td className={`border border-slate-700 ${printCellPadding} text-right font-mono font-extrabold`}>
+                    ₹{totalRemainingAll.toLocaleString('en-IN')}
+                  </td>
+                  <td className={`border border-slate-700 ${printCellPadding} text-center font-bold text-[8px]`}>
+                    {filteredRows.length} R
+                  </td>
+                </tr>
+              );
+            })()}
+          </tfoot>
+        </table>
+
+        {/* Signatures & Audit Footer */}
+        <div className="mt-6 pt-4 border-t border-slate-300 grid grid-cols-3 gap-6 text-[10px] text-center text-slate-700 font-bold">
+          <div>
+            <div className="border-b border-slate-400 pb-6 mb-1"></div>
+            <span>Prepared By / Accountant</span>
+          </div>
+          <div>
+            <div className="border-b border-slate-400 pb-6 mb-1"></div>
+            <span>Cashier / Field Verifier</span>
+          </div>
+          <div>
+            <div className="border-b border-slate-400 pb-6 mb-1"></div>
+            <span>Branch Manager / Authorized Signatory</span>
+          </div>
         </div>
       </div>
 

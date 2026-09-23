@@ -2,10 +2,8 @@ import React, { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AdminNavbar } from './components/AdminNavbar';
 import { AdminSidebar, type AdminTab } from './components/AdminSidebar';
-import { 
-  RefreshCw, 
-  Download 
-} from 'lucide-react';
+import { Download } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 import type { Employee, FinanceRecord } from './types';
 import { DashboardOverview } from './Sidebarpages/DashboardOverview';
@@ -160,11 +158,104 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const financeCount = financeRecordsList.length;
 
   const handleExportData = () => {
-    onShowToast(`Exported ${activeTab} data to Excel/CSV successfully.`);
-  };
+    try {
+      const dateStamp = new Date().toISOString().split('T')[0];
+      const wb = XLSX.utils.book_new();
 
-  const handleSyncData = () => {
-    onShowToast('Synced local branch dataset with central cloud repository.');
+      if (activeTab === 'employees') {
+        const empHeaders = [
+          'Employee ID',
+          'Full Name',
+          'Age',
+          'Phone',
+          'Alternative Phone',
+          'Aadhar Card',
+          'Gmail',
+          'PAN Card',
+          'Village',
+          'Assigned Area',
+          'Reference Member',
+          'Relationship',
+          'Joining Date',
+          'Status'
+        ];
+
+        const empRows = employeesList.map(emp => [
+          emp.id,
+          emp.name,
+          emp.age,
+          emp.phone,
+          emp.altPhone || '',
+          emp.aadharCard,
+          emp.gmail,
+          emp.panCard,
+          emp.village,
+          emp.assignedArea,
+          emp.referenceName || '',
+          emp.relationshipToReference || '',
+          emp.joiningDate,
+          emp.status
+        ]);
+
+        const ws = XLSX.utils.aoa_to_sheet([empHeaders, ...empRows]);
+        XLSX.utils.book_append_sheet(wb, ws, 'Employees');
+        XLSX.writeFile(wb, `KN_Finance_Employee_Directory_${dateStamp}.xlsx`);
+        onShowToast(`Exported ${employeesList.length} employee records to Excel! 📊`);
+      } else if (activeTab === 'finance_book') {
+        const finHeaders = [
+          'S.No',
+          'Loan ID',
+          'Borrower Name',
+          'Reference Name',
+          'Start Date',
+          'Principal Amount (₹)',
+          'Total With Interest (₹)',
+          'Payment Process',
+          'Total Payments Count',
+          'Status'
+        ];
+
+        const finRows = financeRecordsList.map(rec => [
+          rec.sNo,
+          rec.id,
+          rec.name,
+          rec.referenceName || '',
+          rec.startDate,
+          rec.principalAmount,
+          rec.totalWithInterest,
+          rec.paymentProcess,
+          rec.payments ? rec.payments.length : 0,
+          rec.isClosed ? 'Closed' : 'Active'
+        ]);
+
+        const ws = XLSX.utils.aoa_to_sheet([finHeaders, ...finRows]);
+        XLSX.utils.book_append_sheet(wb, ws, 'Finance Records');
+        XLSX.writeFile(wb, `KN_Finance_Records_${dateStamp}.xlsx`);
+        onShowToast(`Exported ${financeRecordsList.length} finance book records to Excel! 📊`);
+      } else {
+        const overviewData = [
+          ['KN FINANCE - BRANCH OPERATIONS OVERVIEW'],
+          [`Generated on: ${new Date().toLocaleString('en-IN')}`],
+          [],
+          ['Metric', 'Value'],
+          ['Total Revenue', '₹12,45,800'],
+          ['Today Generated Amount', '₹48,200'],
+          ['Monthly Maintenance', '₹95,000'],
+          ['Total Registered Employees', employeesList.length],
+          ['Active Employees', employeesList.filter(e => e.status === 'Active').length],
+          ['Inactive Employees', employeesList.filter(e => e.status === 'Inactive').length],
+          ['Total Finance Records', financeRecordsList.length],
+        ];
+
+        const ws = XLSX.utils.aoa_to_sheet(overviewData);
+        XLSX.utils.book_append_sheet(wb, ws, 'Overview');
+        XLSX.writeFile(wb, `KN_Finance_Branch_Overview_${dateStamp}.xlsx`);
+        onShowToast('Exported branch overview telemetry to Excel! 📊');
+      }
+    } catch (err) {
+      console.error('Failed to export page data:', err);
+      onShowToast('Failed to export data.');
+    }
   };
 
   return (
@@ -194,8 +285,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
           
-          {/* Header Banner */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs">
+          {/* Header Banner (Hidden during print) */}
+          <div className="no-print flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-[11px] font-extrabold text-[#166534] uppercase tracking-wider bg-[#166534]/10 px-2 py-0.5 rounded border border-[#166534]/20">
@@ -216,13 +307,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
 
             <div className="flex items-center gap-3">
-              <button
-                onClick={handleSyncData}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#0F172A] text-xs font-bold transition-all border border-slate-300"
-              >
-                <RefreshCw className="w-3.5 h-3.5 text-[#166534]" />
-                <span>Sync Data</span>
-              </button>
               <button
                 onClick={handleExportData}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#166534] hover:bg-[#14532d] text-white text-xs font-extrabold transition-all shadow-sm"

@@ -427,7 +427,6 @@ function transliterateWordTeToEn(word: string): string {
   while (i < len) {
     const ch = chars[i];
     const nextCh = i + 1 < len ? chars[i + 1] : '';
-    const afterNextCh = i + 2 < len ? chars[i + 2] : '';
 
     // Check independent vowel
     if (TELUGU_VOWELS[ch]) {

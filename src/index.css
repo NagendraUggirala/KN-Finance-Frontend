@@ -1,0 +1,77 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  color-scheme: light;
+
+  /* Custom Color Tokens requested by User */
+  --primary-color: #166534; /* Deep Green */
+  --primary-hover: #14532d;
+  --accent-color: #D4A017;  /* Gold */
+  --bg-color: #F8FAFC;      /* Soft White */
+  --card-bg: #FFFFFF;       /* White */
+  --text-main: #0F172A;     /* Deep Slate */
+  --text-muted: #64748B;    /* Muted Slate */
+  --success-color: #16A34A; /* Green */
+  --error-color: #DC2626;   /* Red */
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+
+.font-display {
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Light Theme Card Styling */
+.kn-card {
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.05), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
+  border-radius: 1rem;
+}
+
+.kn-card-hover {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.kn-card-hover:hover {
+  transform: translateY(-3px);
+  border-color: #166534;
+  box-shadow: 0 12px 20px -3px rgba(22, 101, 52, 0.12), 0 4px 6px -4px rgba(22, 101, 52, 0.08);
+}
+
+/* Text Gradients */
+.gradient-text-green {
+  background: linear-gradient(135deg, #166534 0%, #15803d 50%, #D4A017 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gradient-text-gold {
+  background: linear-gradient(135deg, #D4A017 0%, #b4850e 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}

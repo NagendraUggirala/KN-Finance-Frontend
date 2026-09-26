@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { SuperadminNavbar } from './components/SuperadminNavbar';
 import { SuperadminSidebar, type SuperadminTab } from './components/SuperadminSidebar';
+import { AdminManagement } from './Sidebarpages/AdminManagement';
 import { UserAccountControl, type UserAccount } from './Sidebarpages/UserAccountControl';
 import { Notifications } from './Sidebarpages/Notifications';
 
@@ -17,7 +18,7 @@ export const SuperadminDashboard: React.FC<SuperadminDashboardProps> = ({
   onLogout,
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = (searchParams.get('tab') as SuperadminTab) || 'users';
+  const activeTab = (searchParams.get('tab') as SuperadminTab) || 'admins';
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const setActiveTab = (tab: SuperadminTab) => {
@@ -56,6 +57,9 @@ export const SuperadminDashboard: React.FC<SuperadminDashboardProps> = ({
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
+          {activeTab === 'admins' && (
+            <AdminManagement onShowToast={onShowToast} />
+          )}
           {activeTab === 'users' && (
             <UserAccountControl
               onShowToast={onShowToast}

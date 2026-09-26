@@ -14,6 +14,7 @@ import { Login, type UserRole } from './Pages/Landingpages/Login';
 import { DashboardPreview } from './Pages/Landingpages/DashboardPreview';
 import { AdminDashboard } from './Pages/AdminDashboard/AdminDashboard';
 import { SuperadminDashboard } from './Pages/SuperadminDashboard/SuperadminDashboard';
+import { SuperadminLogin } from './Pages/Landingpages/SuperadminLogin';
 
 // Styles
 import './App.css';
@@ -94,8 +95,8 @@ export function App() {
         </div>
       )}
 
-      {/* Top Navigation Bar (Hidden on Super Admin dark dashboard or rendered with context) */}
-      {!location.pathname.startsWith('/super-admin') && !location.pathname.startsWith('/admin') && (
+      {/* Top Navigation Bar (Hidden on Super Admin / Admin portals & Superadmin login) */}
+      {!location.pathname.startsWith('/super-admin') && !location.pathname.startsWith('/admin') && !location.pathname.startsWith('/superadmin') && (
         <Navbar
           isLoggedIn={isLoggedIn}
           userName={userName}
@@ -167,6 +168,15 @@ export function App() {
               />
             }
           />
+          <Route
+            path="/superadmin"
+            element={
+              <SuperadminLogin
+                onLoginSuccess={handleLoginSuccess}
+                onShowToast={showToast}
+              />
+            }
+          />
           {/* Fallback Route */}
           <Route
             path="*"
@@ -180,8 +190,8 @@ export function App() {
         </Routes>
       </main>
 
-      {/* Footer (Hidden on Admin / Super Admin Portals for full workspace feel) */}
-      {!location.pathname.startsWith('/super-admin') && !location.pathname.startsWith('/admin') && (
+      {/* Footer (Hidden on Admin / Super Admin Portals & Login for full workspace feel) */}
+      {!location.pathname.startsWith('/super-admin') && !location.pathname.startsWith('/admin') && !location.pathname.startsWith('/superadmin') && (
         <Footer onShowToast={showToast} />
       )}
 

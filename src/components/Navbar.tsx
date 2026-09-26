@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { Menu, X, ArrowRight, User, LayoutDashboard, LogOut, Crown, Shield } from 'lucide-react';
+import { Menu, X, User, LayoutDashboard, LogOut, Crown, Shield } from 'lucide-react';
 import type { UserRole } from '../Pages/Landingpages/Login';
 
 interface NavbarProps {
@@ -63,7 +63,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="sticky top-0 z-50 w-full bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-20">
-          
+
           {/* Brand Logo */}
           <Link
             to="/"
@@ -95,10 +95,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 key={item.path}
                 to={item.path}
                 className={({ isActive }) =>
-                  `px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
-                    isActive
-                      ? 'text-[#166534] bg-[#166534]/10 border border-[#166534]/20 shadow-2xs'
-                      : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-100'
+                  `px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${isActive
+                    ? 'text-[#166534] bg-[#166534]/10 border border-[#166534]/20 shadow-2xs'
+                    : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-100'
                   }`
                 }
               >
@@ -114,19 +113,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                 {getRoleBadge()}
                 <button
                   onClick={() => navigate(getDashboardPath())}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm ${
-                    userRole === 'super_admin'
-                      ? 'bg-slate-900 text-amber-400 hover:bg-slate-800 border border-slate-800'
-                      : 'bg-[#166534] text-white hover:bg-[#14532d]'
-                  }`}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm ${userRole === 'super_admin'
+                    ? 'bg-slate-900 text-amber-400 hover:bg-slate-800 border border-slate-800'
+                    : 'bg-[#166534] text-white hover:bg-[#14532d]'
+                    }`}
                 >
                   <LayoutDashboard className="w-4 h-4 text-[#D4A017]" />
                   <span>
                     {userRole === 'super_admin'
                       ? 'Super Admin Portal'
                       : userRole === 'admin'
-                      ? 'Admin Portal'
-                      : userName || 'Dashboard'}
+                        ? 'Admin Portal'
+                        : userName || 'Dashboard'}
                   </span>
                 </button>
                 <button
@@ -144,16 +142,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                   className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-[#0F172A] hover:bg-slate-100 border border-slate-200 transition-all"
                 >
                   <User className="w-4 h-4 text-[#166534]" />
-                  Sign In
+                  Login
                 </button>
 
-                <button
-                  onClick={onOpenLogin}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-extrabold text-slate-950 bg-[#D4A017] hover:bg-[#b4850e] shadow-md shadow-amber-900/10 transition-all duration-300 transform hover:-translate-y-0.5"
-                >
-                  <span>Open Account</span>
-                  <ArrowRight className="w-4 h-4 text-slate-950" />
-                </button>
+
               </>
             )}
           </div>
@@ -179,10 +171,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 to={item.path}
                 onClick={() => setMobileMenuOpen(false)}
                 className={({ isActive }) =>
-                  `text-left px-4 py-3 rounded-lg text-sm font-semibold transition-all ${
-                    isActive
-                      ? 'text-[#166534] bg-[#166534]/10 border border-[#166534]/20'
-                      : 'text-[#64748B] hover:bg-slate-50'
+                  `text-left px-4 py-3 rounded-lg text-sm font-semibold transition-all ${isActive
+                    ? 'text-[#166534] bg-[#166534]/10 border border-[#166534]/20'
+                    : 'text-[#64748B] hover:bg-slate-50'
                   }`
                 }
               >
@@ -214,15 +205,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 >
                   Sign In
                 </button>
-                <button
-                  onClick={() => {
-                    onOpenLogin();
-                    setMobileMenuOpen(false);
-                  }}
-                  className="w-full py-3 rounded-xl text-sm font-extrabold text-slate-950 bg-[#D4A017] shadow-sm"
-                >
-                  Open Account
-                </button>
+
               </>
             )}
           </div>

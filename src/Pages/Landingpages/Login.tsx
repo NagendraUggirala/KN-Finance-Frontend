@@ -15,10 +15,18 @@ import {
   RefreshCw,
   Clock,
   Check,
-  Shield
+  Shield,
+  Sparkles
 } from 'lucide-react';
+import {
+  adminLoginApi,
+  forgotPasswordApi,
+  resendOtpApi,
+  verifyOtpApi,
+  resetPasswordApi
+} from '../../lib/api';
 
-export type UserRole = 'super_admin' | 'admin' | 'user';
+export type UserRole = 'admin' | 'user' | 'super_admin';
 
 type AuthView = 'signin' | 'request_otp' | 'verify_otp' | 'reset_password' | 'reset_success';
 
@@ -39,7 +47,7 @@ export const Login: React.FC<LoginProps> = ({
   const [view, setView] = useState<AuthView>('signin');
 
   // Sign in state
-  const [role, setRole] = useState<UserRole>('admin');
+  const [role, setRole] = useState<'admin' | 'user'>('admin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -48,15 +56,15 @@ export const Login: React.FC<LoginProps> = ({
   // Forgot password & OTP verification state
   const [resetEmail, setResetEmail] = useState('');
   const [otpValues, setOtpValues] = useState<string[]>(['', '', '', '', '', '']);
-  const [generatedOtp, setGeneratedOtp] = useState<string>('');
+  const [resetToken, setResetToken] = useState<string>('');
   const [resendTimer, setResendTimer] = useState<number>(0);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [flowError, setFlowError] = useState<string | null>(null);
+  const [flowSuccessMessage, setFlowSuccessMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [demoBannerCode, setDemoBannerCode] = useState<string | null>(null);
 
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -77,7 +85,8 @@ export const Login: React.FC<LoginProps> = ({
       setView('signin');
       setLoginError(null);
       setFlowError(null);
-      setDemoBannerCode(null);
+      setFlowSuccessMessage(null);
+      setIsSubmitting(false);
     }
   }, [isOpen]);
 
@@ -87,19 +96,18 @@ export const Login: React.FC<LoginProps> = ({
   const handleEmailChange = (val: string) => {
     setEmail(val);
     const lower = val.toLowerCase();
-    if (lower.includes('superadmin')) {
-      setRole('super_admin');
-    } else if (lower.includes('admin')) {
+    if (lower.includes('admin')) {
       setRole('admin');
     }
   };
 
-  // Submit Sign In
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  // Submit Sign In (POST /api/auth/login)
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
 
-    if (!email.trim()) {
+    const identifier = email.trim();
+    if (!identifier) {
       setLoginError('Please enter your work or account email.');
       return;
     }
@@ -108,48 +116,71 @@ export const Login: React.FC<LoginProps> = ({
       return;
     }
 
-    const displayName = email.split('@')[0] || (role === 'super_admin' ? 'Super Admin' : role === 'admin' ? 'Operations Admin' : 'Employee');
-    const roleLabel = role === 'super_admin' ? 'Super Admin' : role === 'admin' ? 'Operations Admin' : 'Authorized User';
+    setIsSubmitting(true);
 
-    onLoginSuccess(displayName, role);
-    onShowToast(`Welcome back! Logged in as ${roleLabel}.`);
-    onClose();
+    try {
+      // Admin or Authorized User login
+      const response = await adminLoginApi({
+        email: identifier,
+        password: password,
+      });
+      const activeName = response.user?.name || response.user?.username || identifier.split('@')[0];
+      const assignedRole: UserRole = response.user?.role === 'admin' ? 'admin' : (role === 'admin' ? 'admin' : 'user');
+      onLoginSuccess(activeName, assignedRole);
+      onShowToast(response.message || `Welcome back, ${activeName}! Login successful.`);
+      onClose();
+    } catch (err: any) {
+      setLoginError(err.message || 'Authentication failed. Please check your credentials.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // Step 1: Send OTP to Email
-  const handleSendOtp = (e: React.FormEvent) => {
+  // Step 1: Send OTP to Email (POST /api/auth/forgot-password)
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setFlowError(null);
+    setFlowSuccessMessage(null);
 
-    if (!resetEmail.trim() || !resetEmail.includes('@')) {
-      setFlowError('Please provide a valid employee or administrator email.');
+    const targetEmail = resetEmail.trim();
+    if (!targetEmail || !targetEmail.includes('@')) {
+      setFlowError('Please provide a valid employee or administrator email address.');
       return;
     }
 
     setIsSubmitting(true);
 
-    setTimeout(() => {
-      const randomCode = Math.floor(100000 + Math.random() * 900000).toString();
-      setGeneratedOtp(randomCode);
-      setDemoBannerCode(randomCode);
+    try {
+      const response = await forgotPasswordApi({ email: targetEmail });
       setOtpValues(['', '', '', '', '', '']);
       setResendTimer(60);
-      setIsSubmitting(false);
+      setFlowSuccessMessage(response.message || `Verification OTP dispatched to ${targetEmail}`);
       setView('verify_otp');
-      onShowToast(`Verification OTP dispatched to ${resetEmail}`);
-    }, 600);
+      onShowToast(response.message || `Verification code dispatched to ${targetEmail}`);
+    } catch (err: any) {
+      setFlowError(err.message || 'Failed to dispatch verification OTP.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // Resend OTP
-  const handleResendOtp = () => {
-    if (resendTimer > 0) return;
-    const randomCode = Math.floor(100000 + Math.random() * 900000).toString();
-    setGeneratedOtp(randomCode);
-    setDemoBannerCode(randomCode);
-    setResendTimer(60);
-    setOtpValues(['', '', '', '', '', '']);
+  // Resend OTP (POST /api/auth/resend-otp)
+  const handleResendOtp = async () => {
+    if (resendTimer > 0 || isSubmitting) return;
     setFlowError(null);
-    onShowToast(`New verification code sent to ${resetEmail}!`);
+    setIsSubmitting(true);
+
+    try {
+      const response = await resendOtpApi({ email: resetEmail.trim() });
+      setResendTimer(60);
+      setOtpValues(['', '', '', '', '', '']);
+      setFlowSuccessMessage(response.message || 'A new verification code has been dispatched.');
+      onShowToast(response.message || `New verification code sent to ${resetEmail}!`);
+    } catch (err: any) {
+      setFlowError(err.message || 'Failed to resend code. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Handle individual 6-box OTP entry & auto-advance
@@ -182,8 +213,8 @@ export const Login: React.FC<LoginProps> = ({
     }
   };
 
-  // Step 2: Verify OTP
-  const handleVerifyOtp = (e: React.FormEvent) => {
+  // Step 2: Verify OTP (POST /api/auth/verify-otp)
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setFlowError(null);
     const enteredCode = otpValues.join('');
@@ -193,23 +224,31 @@ export const Login: React.FC<LoginProps> = ({
       return;
     }
 
-    if (enteredCode !== generatedOtp) {
-      setFlowError('Invalid verification code. Please check your email or resend.');
-      return;
-    }
-
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
+
+    try {
+      const response = await verifyOtpApi({
+        email: resetEmail.trim(),
+        otp: enteredCode,
+      });
+
+      if (!response.resetToken) {
+        throw new Error('Verification completed but no reset session token was received.');
+      }
+
+      setResetToken(response.resetToken);
       setFlowError(null);
-      setDemoBannerCode(null);
       setView('reset_password');
-      onShowToast('Identity verified! Please set your new password.');
-    }, 500);
+      onShowToast(response.message || 'Identity verified! Please set your new password.');
+    } catch (err: any) {
+      setFlowError(err.message || 'Invalid or expired verification code.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // Step 3: Save New Password
-  const handleSaveNewPassword = (e: React.FormEvent) => {
+  // Step 3: Save New Password (POST /api/auth/reset-password)
+  const handleSaveNewPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setFlowError(null);
 
@@ -223,12 +262,40 @@ export const Login: React.FC<LoginProps> = ({
       return;
     }
 
+    if (!resetToken) {
+      setFlowError('Reset session has expired. Please verify OTP again.');
+      setView('request_otp');
+      return;
+    }
+
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
+
+    try {
+      const response = await resetPasswordApi({
+        resetToken: resetToken,
+        newPassword: newPassword,
+        confirmPassword: confirmPassword,
+      });
+
       setView('reset_success');
-      onShowToast('Password updated successfully!');
-    }, 600);
+      onShowToast(response.message || 'Password updated successfully!');
+    } catch (err: any) {
+      setFlowError(err.message || 'Failed to update password. The reset session may have expired.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Quick fill demo helper
+  const handleQuickFill = () => {
+    if (role === 'admin') {
+      setEmail('admin@knfinance.com');
+      setPassword('password123');
+    } else {
+      setEmail('user@knfinance.com');
+      setPassword('password123');
+    }
+    setLoginError(null);
   };
 
   // Checklist states
@@ -239,7 +306,7 @@ export const Login: React.FC<LoginProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="relative w-full max-w-md bg-white rounded-3xl p-7 sm:p-8 border border-slate-200 shadow-2xl space-y-6">
-        
+
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -272,7 +339,7 @@ export const Login: React.FC<LoginProps> = ({
                 Reset / Set Password
               </h2>
               <p className="text-xs text-[#64748B]">
-                We will send a 6-digit OTP verification code to your email.
+                We will dispatch a 6-digit OTP code to your registered email.
               </p>
             </>
           )}
@@ -311,24 +378,10 @@ export const Login: React.FC<LoginProps> = ({
           )}
         </div>
 
-        {/* Demo OTP Banner for instant testing */}
-        {demoBannerCode && (view === 'verify_otp') && (
-          <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5 shadow-xs">
-            <Mail className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-            <div className="flex-1">
-              <span className="font-bold">Email Dispatched!</span>
-              <p className="mt-0.5 text-[11px] text-amber-800">
-                OTP sent to <span className="underline font-semibold">{resetEmail}</span>.
-                Verification Code: <span className="font-mono font-extrabold text-amber-950 text-sm tracking-wider bg-amber-200/70 px-1.5 py-0.5 rounded">{demoBannerCode}</span>
-              </p>
-            </div>
-          </div>
-        )}
-
         {/* ---------------- VIEW 1: SIGN IN ---------------- */}
         {view === 'signin' && (
           <form onSubmit={handleLoginSubmit} className="space-y-4">
-            
+
             {loginError && (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
@@ -336,7 +389,7 @@ export const Login: React.FC<LoginProps> = ({
               </div>
             )}
 
-            {/* Portal Role Selector */}
+            {/* Portal Role Selector - 2 Roles: Admin/Ops, User */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-[#0F172A] flex items-center justify-between">
                 <span>Account Role</span>
@@ -345,35 +398,52 @@ export const Login: React.FC<LoginProps> = ({
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setRole('admin')}
-                  className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                    role === 'admin'
+                  onClick={() => {
+                    setRole('admin');
+                    setLoginError(null);
+                  }}
+                  className={`py-2 px-2 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${role === 'admin'
                       ? 'bg-[#166534] text-white border-[#166534] shadow-xs'
                       : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
+                    }`}
                 >
-                  <Shield className="w-3.5 h-3.5 text-[#D4A017]" />
-                  <span>Admin / Ops</span>
+                  <Shield className="w-3.5 h-3.5 text-[#D4A017] shrink-0" />
+                  <span className="truncate">Admin / Ops</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setRole('user')}
-                  className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                    role === 'user'
+                  onClick={() => {
+                    setRole('user');
+                    setLoginError(null);
+                  }}
+                  className={`py-2 px-2 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${role === 'user'
                       ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
                       : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
+                    }`}
                 >
-                  <User className="w-3.5 h-3.5 text-[#D4A017]" />
-                  <span>Employee / User</span>
+                  <User className="w-3.5 h-3.5 text-[#D4A017] shrink-0" />
+                  <span className="truncate">User / Client</span>
                 </button>
               </div>
             </div>
 
             {/* Email Field */}
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#0F172A]">Work Email Address</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-[#0F172A]">
+                  Work Email Address
+                </label>
+                <button
+                  type="button"
+                  onClick={handleQuickFill}
+                  className="text-[11px] text-[#166534] hover:text-[#14532d] flex items-center gap-1 font-semibold cursor-pointer"
+                  title="Quick fill test credentials"
+                >
+                  <Sparkles className="w-3 h-3 text-[#D4A017]" />
+                  <span>Demo fill</span>
+                </button>
+              </div>
               <div className="relative">
                 <input
                   type="email"
@@ -382,7 +452,7 @@ export const Login: React.FC<LoginProps> = ({
                   onChange={(e) => handleEmailChange(e.target.value)}
                   placeholder={
                     role === 'admin'
-                      ? 'admin.ny@knfinance.com'
+                      ? 'admin@knfinance.com'
                       : 'employee@knfinance.com'
                   }
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-[#0F172A] text-xs focus:outline-none focus:border-[#166534] transition-all"
@@ -398,8 +468,9 @@ export const Login: React.FC<LoginProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setResetEmail(email);
+                    setResetEmail(email.includes('@') ? email : '');
                     setFlowError(null);
+                    setFlowSuccessMessage(null);
                     setView('request_otp');
                   }}
                   className="text-xs font-semibold text-[#166534] hover:text-[#14532d] hover:underline cursor-pointer"
@@ -431,10 +502,24 @@ export const Login: React.FC<LoginProps> = ({
             {/* Submit Button */}
             <button
               type="submit"
-              className="w-full py-3 rounded-xl text-xs font-extrabold text-white bg-[#166534] hover:bg-[#14532d] shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer mt-2"
+              disabled={isSubmitting}
+              className="w-full py-3 rounded-xl text-xs font-extrabold text-white bg-[#166534] hover:bg-[#14532d] shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer mt-2 disabled:opacity-75"
             >
-              <span>Sign In to {role === 'admin' ? 'Admin Portal' : 'Workspace'}</span>
-              <ArrowRight className="w-4 h-4 text-[#D4A017]" />
+              {isSubmitting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-[#D4A017]" />
+                  <span>Authenticating...</span>
+                </>
+              ) : (
+                <>
+                  <span>
+                    {role === 'admin'
+                      ? 'Sign In to Admin Portal'
+                      : 'Sign In to Workspace'}
+                  </span>
+                  <ArrowRight className="w-4 h-4 text-[#D4A017]" />
+                </>
+              )}
             </button>
 
             {/* First time setup option */}
@@ -443,8 +528,9 @@ export const Login: React.FC<LoginProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setResetEmail(email);
+                  setResetEmail(email.includes('@') ? email : '');
                   setFlowError(null);
+                  setFlowSuccessMessage(null);
                   setView('request_otp');
                 }}
                 className="font-bold text-[#166534] hover:underline cursor-pointer"
@@ -455,10 +541,10 @@ export const Login: React.FC<LoginProps> = ({
           </form>
         )}
 
-        {/* ---------------- VIEW 2: REQUEST OTP VIA EMAIL ---------------- */}
+        {/* ---------------- VIEW 2: REQUEST OTP VIA EMAIL (POST /api/auth/forgot-password) ---------------- */}
         {view === 'request_otp' && (
           <form onSubmit={handleSendOtp} className="space-y-4">
-            
+
             {flowError && (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
@@ -476,13 +562,13 @@ export const Login: React.FC<LoginProps> = ({
                   required
                   value={resetEmail}
                   onChange={(e) => setResetEmail(e.target.value)}
-                  placeholder="employee@knfinance.com"
+                  placeholder="qwerty@example.com"
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-[#0F172A] text-xs focus:outline-none focus:border-[#166534] transition-all"
                 />
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                A 6-digit verification OTP code will be sent to this email.
+                A 6-digit verification code (OTP) will be generated and dispatched to your email address.
               </p>
             </div>
 
@@ -492,7 +578,10 @@ export const Login: React.FC<LoginProps> = ({
               className="w-full py-3 rounded-xl text-xs font-extrabold text-white bg-[#166534] hover:bg-[#14532d] shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
             >
               {isSubmitting ? (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-[#D4A017]" />
+                  <span>Requesting OTP...</span>
+                </>
               ) : (
                 <>
                   <span>Send Verification Code (OTP)</span>
@@ -505,6 +594,7 @@ export const Login: React.FC<LoginProps> = ({
               type="button"
               onClick={() => {
                 setFlowError(null);
+                setFlowSuccessMessage(null);
                 setView('signin');
               }}
               className="w-full py-2 text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors flex items-center justify-center gap-1 cursor-pointer"
@@ -515,10 +605,17 @@ export const Login: React.FC<LoginProps> = ({
           </form>
         )}
 
-        {/* ---------------- VIEW 3: ENTER OTP CODE ---------------- */}
+        {/* ---------------- VIEW 3: ENTER OTP CODE (POST /api/auth/verify-otp & /api/auth/resend-otp) ---------------- */}
         {view === 'verify_otp' && (
           <form onSubmit={handleVerifyOtp} className="space-y-4">
-            
+
+            {flowSuccessMessage && (
+              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                <span>{flowSuccessMessage}</span>
+              </div>
+            )}
+
             {flowError && (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
@@ -559,7 +656,8 @@ export const Login: React.FC<LoginProps> = ({
                   <button
                     type="button"
                     onClick={handleResendOtp}
-                    className="text-[#166534] font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                    disabled={isSubmitting}
+                    className="text-[#166534] font-bold hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                     Resend Code
@@ -574,7 +672,10 @@ export const Login: React.FC<LoginProps> = ({
               className="w-full py-3 rounded-xl text-xs font-extrabold text-white bg-[#166534] hover:bg-[#14532d] shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
             >
               {isSubmitting ? (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-[#D4A017]" />
+                  <span>Verifying OTP...</span>
+                </>
               ) : (
                 <>
                   <span>Verify OTP Code</span>
@@ -587,6 +688,7 @@ export const Login: React.FC<LoginProps> = ({
               type="button"
               onClick={() => {
                 setFlowError(null);
+                setFlowSuccessMessage(null);
                 setView('request_otp');
               }}
               className="w-full py-2 text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors flex items-center justify-center gap-1 cursor-pointer"
@@ -597,10 +699,10 @@ export const Login: React.FC<LoginProps> = ({
           </form>
         )}
 
-        {/* ---------------- VIEW 4: RESET / SET PASSWORD ---------------- */}
+        {/* ---------------- VIEW 4: RESET / SET PASSWORD (POST /api/auth/reset-password) ---------------- */}
         {view === 'reset_password' && (
           <form onSubmit={handleSaveNewPassword} className="space-y-4">
-            
+
             {flowError && (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
@@ -685,7 +787,10 @@ export const Login: React.FC<LoginProps> = ({
               className="w-full py-3 rounded-xl text-xs font-extrabold text-white bg-[#166534] hover:bg-[#14532d] shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
             >
               {isSubmitting ? (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-[#D4A017]" />
+                  <span>Updating Password...</span>
+                </>
               ) : (
                 <>
                   <span>Save & Set New Password</span>
@@ -708,7 +813,7 @@ export const Login: React.FC<LoginProps> = ({
                 Credentials Updated!
               </h3>
               <p className="text-xs text-slate-600 max-w-xs mx-auto">
-                Your new password has been stored securely. You can now proceed to log in with your updated credentials.
+                Your new password has been stored securely in KN Finance. You can now proceed to log in with your updated credentials.
               </p>
             </div>
 

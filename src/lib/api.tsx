@@ -21,6 +21,67 @@ export interface SuperAdminLoginResponse {
   [key: string]: any;
 }
 
+export interface AdminLoginPayload {
+  email: string;
+  password: string;
+}
+
+export interface AdminLoginResponse {
+  success: boolean;
+  message?: string;
+  token?: string;
+  user?: {
+    id?: string;
+    username?: string;
+    name?: string;
+    email?: string;
+    role?: string;
+    status?: string;
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
+export interface ForgotPasswordPayload {
+  email: string;
+}
+
+export interface ForgotPasswordResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface ResendOtpPayload {
+  email: string;
+}
+
+export interface ResendOtpResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface VerifyOtpPayload {
+  email: string;
+  otp: string;
+}
+
+export interface VerifyOtpResponse {
+  success: boolean;
+  message: string;
+  resetToken?: string;
+}
+
+export interface ResetPasswordPayload {
+  resetToken: string;
+  newPassword: string;
+  confirmPassword: string;
+}
+
+export interface ResetPasswordResponse {
+  success: boolean;
+  message: string;
+}
+
 export interface AdminItem {
   _id: string;
   username: string;
@@ -82,6 +143,122 @@ export function getSuperAdminToken(): string | null {
   );
 }
 
+/**
+ * Retrieve authorization headers for Admin requests
+ */
+export function getAdminToken(): string | null {
+  return (
+    localStorage.getItem('kn_admin_token') ||
+    localStorage.getItem('token') ||
+    null
+  );
+}
+
+/**
+ * Check if the Super Admin is currently authenticated with a valid token
+ */
+export function isSuperAdminAuthenticated(): boolean {
+  const token = getSuperAdminToken();
+  if (!token) return false;
+
+  try {
+    const parts = token.split('.');
+    if (parts.length === 3) {
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (payload.exp && typeof payload.exp === 'number') {
+        const isExpired = Date.now() >= payload.exp * 1000;
+        if (isExpired) {
+          superAdminLogout();
+          return false;
+        }
+      }
+      if (payload.role && !['superadmin', 'super_admin'].includes(String(payload.role).toLowerCase())) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Check if the Admin is currently authenticated
+ */
+export function isAdminAuthenticated(): boolean {
+  const token = getAdminToken();
+  if (!token) return false;
+
+  try {
+    const parts = token.split('.');
+    if (parts.length === 3) {
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (payload.exp && typeof payload.exp === 'number') {
+        const isExpired = Date.now() >= payload.exp * 1000;
+        if (isExpired) {
+          adminLogout();
+          return false;
+        }
+      }
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Super Admin Logout utility - clears all credentials and session items
+ */
+export function superAdminLogout(): void {
+  localStorage.removeItem('kn_superadmin_token');
+  localStorage.removeItem('kn_superadmin_user');
+  localStorage.removeItem('kn_superadmin_username');
+  localStorage.removeItem('token');
+}
+
+/**
+ * Admin Logout utility
+ */
+export function adminLogout(): void {
+  localStorage.removeItem('kn_admin_token');
+  localStorage.removeItem('kn_admin_user');
+  localStorage.removeItem('kn_admin_name');
+  localStorage.removeItem('token');
+}
+
+/**
+ * Save Super Admin session info
+ */
+export function setSuperAdminSession(token: string, username?: string, userObj?: any): void {
+  if (token) {
+    localStorage.setItem('kn_superadmin_token', token);
+    localStorage.setItem('token', token);
+  }
+  if (username) {
+    localStorage.setItem('kn_superadmin_username', username);
+  }
+  if (userObj) {
+    localStorage.setItem('kn_superadmin_user', JSON.stringify(userObj));
+  }
+}
+
+/**
+ * Save Admin session info
+ */
+export function setAdminSession(token: string, userObj?: any): void {
+  if (token) {
+    localStorage.setItem('kn_admin_token', token);
+    localStorage.setItem('token', token);
+  }
+  if (userObj) {
+    localStorage.setItem('kn_admin_user', JSON.stringify(userObj));
+    if (userObj.name || userObj.username) {
+      localStorage.setItem('kn_admin_name', userObj.name || userObj.username);
+    }
+  }
+}
+
 function getAuthHeaders(): Record<string, string> {
   const token = getSuperAdminToken();
   const headers: Record<string, string> = {
@@ -101,6 +278,41 @@ export async function superAdminLoginApi(credentials: SuperAdminLoginPayload): P
   const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
   const url = `${baseUrl}/api/auth/superadmin/login`;
 
+  const payload = {
+    username: credentials.username || credentials.email,
+    password: credentials.password,
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Super Admin login failed with status ${response.status}`;
+    throw new Error(errorMsg);
+  }
+
+  if (data?.token) {
+    setSuperAdminSession(data.token, data.user?.username, data.user);
+  }
+
+  return data;
+}
+
+/**
+ * Admin Login API caller
+ * Calls backend endpoint POST /api/auth/login
+ */
+export async function adminLoginApi(credentials: AdminLoginPayload): Promise<AdminLoginResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/auth/login`;
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -112,12 +324,116 @@ export async function superAdminLoginApi(credentials: SuperAdminLoginPayload): P
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const errorMsg = data?.message || data?.error || `Super Admin login failed with status ${response.status}`;
+    const errorMsg = data?.message || data?.error || `Admin login failed with status ${response.status}`;
     throw new Error(errorMsg);
   }
 
   if (data?.token) {
-    localStorage.setItem('kn_superadmin_token', data.token);
+    setAdminSession(data.token, data.user);
+  }
+
+  return data;
+}
+
+/**
+ * Forgot Password - Request OTP
+ * Calls backend endpoint POST /api/auth/forgot-password
+ */
+export async function forgotPasswordApi(payload: ForgotPasswordPayload): Promise<ForgotPasswordResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/auth/forgot-password`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to request OTP (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * Resend Password Reset OTP
+ * Calls backend endpoint POST /api/auth/resend-otp
+ */
+export async function resendOtpApi(payload: ResendOtpPayload): Promise<ResendOtpResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/auth/resend-otp`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to resend OTP (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * Verify 6-Digit OTP
+ * Calls backend endpoint POST /api/auth/verify-otp
+ */
+export async function verifyOtpApi(payload: VerifyOtpPayload): Promise<VerifyOtpResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/auth/verify-otp`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to verify OTP (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * Set New Password
+ * Calls backend endpoint POST /api/auth/reset-password
+ */
+export async function resetPasswordApi(payload: ResetPasswordPayload): Promise<ResetPasswordResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/auth/reset-password`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to reset password (status ${response.status})`;
+    throw new Error(errorMsg);
   }
 
   return data;

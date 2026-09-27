@@ -5,6 +5,7 @@ import { CheckCircle2, X } from 'lucide-react';
 // Components & Layout
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
+import { SuperAdminProtectedRoute } from './components/SuperAdminProtectedRoute';
 
 // Pages & Modals
 import { Landing } from './Pages/Landingpages/Landing';
@@ -15,16 +16,17 @@ import { DashboardPreview } from './Pages/Landingpages/DashboardPreview';
 import { AdminDashboard } from './Pages/AdminDashboard/AdminDashboard';
 import { SuperadminDashboard } from './Pages/SuperadminDashboard/SuperadminDashboard';
 import { SuperadminLogin } from './Pages/Landingpages/SuperadminLogin';
+import { isSuperAdminAuthenticated, superAdminLogout } from './lib/api';
 
 // Styles
 import './App.css';
 
 export function App() {
-  // Application State
+  // Application State hydrated from stored session
   const [loginModalOpen, setLoginModalOpen] = useState<boolean>(false);
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
-  const [userRole, setUserRole] = useState<UserRole>('user');
-  const [userName, setUserName] = useState<string>('Alex Sterling');
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => isSuperAdminAuthenticated());
+  const [userRole, setUserRole] = useState<UserRole>(() => (isSuperAdminAuthenticated() ? 'super_admin' : 'user'));
+  const [userName, setUserName] = useState<string>(() => localStorage.getItem('kn_superadmin_username') || 'Alex Sterling');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const navigate = useNavigate();
@@ -60,9 +62,21 @@ export function App() {
   }, [navigate]);
 
   const handleLogout = useCallback(() => {
+    superAdminLogout();
     setIsLoggedIn(false);
+    setUserRole('user');
+    setUserName('Alex Sterling');
     showToast('Signed out of KN Finance.');
     navigate('/');
+  }, [navigate, showToast]);
+
+  const handleSuperadminLogout = useCallback(() => {
+    superAdminLogout();
+    setIsLoggedIn(false);
+    setUserRole('user');
+    setUserName('Alex Sterling');
+    showToast('Super Admin signed out successfully. Access locked.');
+    navigate('/superadmin');
   }, [navigate, showToast]);
 
   const handleOpenLogin = useCallback(() => {
@@ -161,11 +175,13 @@ export function App() {
           <Route
             path="/super-admin"
             element={
-              <SuperadminDashboard
-                userName={userName}
-                onShowToast={showToast}
-                onLogout={handleLogout}
-              />
+              <SuperAdminProtectedRoute onShowToast={showToast}>
+                <SuperadminDashboard
+                  userName={userName}
+                  onShowToast={showToast}
+                  onLogout={handleSuperadminLogout}
+                />
+              </SuperAdminProtectedRoute>
             }
           />
           <Route

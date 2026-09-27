@@ -193,6 +193,24 @@ export function App() {
               />
             }
           />
+          <Route
+            path="/superadmin/login"
+            element={
+              <SuperadminLogin
+                onLoginSuccess={handleLoginSuccess}
+                onShowToast={showToast}
+              />
+            }
+          />
+          <Route
+            path="/super-admin/login"
+            element={
+              <SuperadminLogin
+                onLoginSuccess={handleLoginSuccess}
+                onShowToast={showToast}
+              />
+            }
+          />
           {/* Fallback Route */}
           <Route
             path="*"

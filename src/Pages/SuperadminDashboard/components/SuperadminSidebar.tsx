@@ -38,7 +38,7 @@ export const SuperadminSidebar: React.FC<SuperadminSidebarProps> = ({
       )}
 
       <aside
-        className={`fixed lg:static top-0 bottom-0 left-0 z-50 w-64 bg-[#F2F8E1] text-[#0F172A] border-r border-[#C5E1A5] flex flex-col justify-between transition-transform duration-300 transform ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        className={`fixed lg:static top-0 bottom-0 left-0 z-30 lg:z-auto w-64 bg-[#F2F8E1] text-[#0F172A] border-r border-[#C5E1A5] flex flex-col justify-between transition-transform duration-300 transform ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
           }`}
       >
 

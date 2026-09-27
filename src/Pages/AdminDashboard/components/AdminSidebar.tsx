@@ -49,7 +49,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       )}
 
       <aside
-        className={`fixed lg:static top-0 bottom-0 left-0 z-50 bg-white border-r border-slate-200 flex flex-col justify-between transition-all duration-300 transform ${
+        className={`fixed lg:static top-0 bottom-0 left-0 z-30 lg:z-auto bg-white border-r border-slate-200 flex flex-col justify-between transition-all duration-300 transform ${
           isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         } ${isCollapsed ? 'w-64 lg:w-20' : 'w-64 lg:w-64'}`}
       >

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { Eye, EyeOff, ArrowLeft, AlertCircle } from 'lucide-react';
 import superadminBanner from '../../assets/superadmin-banner.jpg';
 import type { UserRole } from './Login';
-import { superAdminLoginApi } from '../../lib/api';
+import { superAdminLoginApi, isSuperAdminAuthenticated } from '../../lib/api';
 
 interface SuperadminLoginProps {
   onLoginSuccess: (userName: string, role: UserRole) => void;
@@ -15,12 +15,22 @@ export const SuperadminLogin: React.FC<SuperadminLoginProps> = ({
   onShowToast,
 }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = (location.state as any)?.from?.pathname || '/super-admin';
+
   const [usernameOrEmail, setUsernameOrEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // If already authenticated, redirect to Super Admin dashboard
+  useEffect(() => {
+    if (isSuperAdminAuthenticated()) {
+      navigate('/super-admin', { replace: true });
+    }
+  }, [navigate]);
 
   // Restore remembered username if available
   useEffect(() => {
@@ -63,7 +73,7 @@ export const SuperadminLogin: React.FC<SuperadminLoginProps> = ({
       const activeName = response.user?.username || identifier;
       onLoginSuccess(activeName, 'super_admin');
       onShowToast(response.message || 'Super Admin login successful! Access granted.');
-      navigate('/super-admin');
+      navigate(from, { replace: true });
     } catch (err: any) {
       setErrorMsg(err.message || 'Invalid Super Admin credentials.');
     } finally {

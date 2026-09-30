@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Lock,
   Mail,
-  User,
+  Users,
   Eye,
   EyeOff,
   ArrowRight,
@@ -16,17 +16,19 @@ import {
   Clock,
   Check,
   Shield,
-  Sparkles
+  Sparkles,
+  Move
 } from 'lucide-react';
 import {
   adminLoginApi,
+  employeeLoginApi,
   forgotPasswordApi,
   resendOtpApi,
   verifyOtpApi,
   resetPasswordApi
 } from '../../lib/api';
 
-export type UserRole = 'admin' | 'user' | 'super_admin';
+export type UserRole = 'admin' | 'employee' | 'user' | 'super_admin';
 
 type AuthView = 'signin' | 'request_otp' | 'verify_otp' | 'reset_password' | 'reset_success';
 
@@ -46,8 +48,8 @@ export const Login: React.FC<LoginProps> = ({
   // Current modal view
   const [view, setView] = useState<AuthView>('signin');
 
-  // Sign in state
-  const [role, setRole] = useState<'admin' | 'user'>('admin');
+  // Sign in state - 2 main portal roles: Admin and Employee
+  const [role, setRole] = useState<'admin' | 'employee'>('admin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -95,13 +97,52 @@ export const Login: React.FC<LoginProps> = ({
   // Auto-detect role when typing email
   const handleEmailChange = (val: string) => {
     setEmail(val);
-    const lower = val.toLowerCase();
-    if (lower.includes('admin')) {
+    const lower = val.toLowerCase().trim();
+    if (lower.includes('nagendra') || lower.includes('admin')) {
       setRole('admin');
+    } else if (lower.includes('qwerty') || lower.includes('employee')) {
+      setRole('employee');
     }
   };
 
-  // Submit Sign In (POST /api/auth/login)
+  // Quick fill Admin Credentials: nagendrauggirala@gmail.com / qwerty@123
+  const handleQuickFillAdmin = () => {
+    setRole('admin');
+    setEmail('nagendrauggirala@gmail.com');
+    setPassword('qwerty@123');
+    setLoginError(null);
+  };
+
+  // Quick fill Employee Credentials: qwerty@gmail.com / Qwerty@123
+  const handleQuickFillEmployee = () => {
+    setRole('employee');
+    setEmail('qwerty@gmail.com');
+    setPassword('Qwerty@123');
+    setLoginError(null);
+  };
+
+  // Drag and Drop helpers for credentials
+  const handleDragStart = (e: React.DragEvent, text: string) => {
+    e.dataTransfer.setData('text/plain', text);
+  };
+
+  const handleDropEmail = (e: React.DragEvent) => {
+    e.preventDefault();
+    const text = e.dataTransfer.getData('text/plain');
+    if (text) {
+      handleEmailChange(text.trim());
+    }
+  };
+
+  const handleDropPassword = (e: React.DragEvent) => {
+    e.preventDefault();
+    const text = e.dataTransfer.getData('text/plain');
+    if (text) {
+      setPassword(text.trim());
+    }
+  };
+
+  // Submit Sign In (POST /api/auth/login OR POST /api/v1/auth/employee/login)
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
@@ -119,16 +160,71 @@ export const Login: React.FC<LoginProps> = ({
     setIsSubmitting(true);
 
     try {
-      // Admin or Authorized User login
-      const response = await adminLoginApi({
-        email: identifier,
-        password: password,
-      });
-      const activeName = response.user?.name || response.user?.username || identifier.split('@')[0];
-      const assignedRole: UserRole = response.user?.role === 'admin' ? 'admin' : (role === 'admin' ? 'admin' : 'user');
-      onLoginSuccess(activeName, assignedRole);
-      onShowToast(response.message || `Welcome back, ${activeName}! Login successful.`);
-      onClose();
+      // Determine if Employee or Admin
+      const isEmployeeTarget =
+        role === 'employee' ||
+        identifier.toLowerCase().includes('qwerty@gmail.com') ||
+        identifier.toLowerCase().includes('employee');
+
+      if (isEmployeeTarget) {
+        // 1. Employee Login: POST /api/v1/auth/employee/login
+        try {
+          const response = await employeeLoginApi({
+            email: identifier,
+            password: password,
+          });
+          const emp = response.employee;
+          const activeName = emp?.fullName || emp?.name || identifier.split('@')[0];
+          onLoginSuccess(activeName, 'employee');
+          onShowToast(response.message || `Welcome, ${activeName}! Field Operations Console ready.`);
+          onClose();
+          return;
+        } catch (empErr: any) {
+          // If user had Admin credentials, attempt Admin fallback
+          if (identifier.toLowerCase().includes('nagendra') || !identifier.toLowerCase().includes('qwerty')) {
+            try {
+              const adminResp = await adminLoginApi({ email: identifier, password });
+              const activeName = adminResp.user?.name || adminResp.user?.username || identifier.split('@')[0];
+              onLoginSuccess(activeName, 'admin');
+              onShowToast(adminResp.message || `Welcome back, ${activeName}! Admin Portal ready.`);
+              onClose();
+              return;
+            } catch {
+              // fallback failed, throw original error
+            }
+          }
+          throw empErr;
+        }
+      } else {
+        // 2. Admin Login: POST /api/auth/login
+        try {
+          const response = await adminLoginApi({
+            email: identifier,
+            password: password,
+          });
+          const activeName = response.user?.name || response.user?.username || identifier.split('@')[0];
+          onLoginSuccess(activeName, 'admin');
+          onShowToast(response.message || `Welcome back, ${activeName}! Admin Portal ready.`);
+          onClose();
+          return;
+        } catch (adminErr: any) {
+          // If user had Employee credentials (e.g. qwerty@gmail.com), attempt Employee fallback
+          if (identifier.toLowerCase().includes('qwerty@gmail.com') || adminErr.message?.includes('401') || adminErr.message?.includes('Unauthorized')) {
+            try {
+              const empResp = await employeeLoginApi({ email: identifier, password });
+              const emp = empResp.employee;
+              const activeName = emp?.fullName || emp?.name || identifier.split('@')[0];
+              onLoginSuccess(activeName, 'employee');
+              onShowToast(empResp.message || `Welcome, ${activeName}! Field Operations Console ready.`);
+              onClose();
+              return;
+            } catch {
+              // fallback failed, throw original error
+            }
+          }
+          throw adminErr;
+        }
+      }
     } catch (err: any) {
       setLoginError(err.message || 'Authentication failed. Please check your credentials.');
     } finally {
@@ -286,18 +382,6 @@ export const Login: React.FC<LoginProps> = ({
     }
   };
 
-  // Quick fill demo helper
-  const handleQuickFill = () => {
-    if (role === 'admin') {
-      setEmail('admin@knfinance.com');
-      setPassword('password123');
-    } else {
-      setEmail('user@knfinance.com');
-      setPassword('password123');
-    }
-    setLoginError(null);
-  };
-
   // Checklist states
   const hasMinLength = newPassword.length >= 8;
   const hasNumberOrSpecial = /[0-9!@#$%^&*(),.?":{}|<>]/.test(newPassword);
@@ -385,64 +469,131 @@ export const Login: React.FC<LoginProps> = ({
             {loginError && (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-                <span>{loginError}</span>
+                <span className="font-medium">{loginError}</span>
               </div>
             )}
 
-            {/* Portal Role Selector - 2 Roles: Admin/Ops, User */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#0F172A] flex items-center justify-between">
-                <span>Account Role</span>
-                <span className="text-[10px] text-slate-400 font-normal">Select portal level</span>
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRole('admin');
-                    setLoginError(null);
-                  }}
-                  className={`py-2 px-2 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${role === 'admin'
-                      ? 'bg-[#166534] text-white border-[#166534] shadow-xs'
-                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                >
-                  <Shield className="w-3.5 h-3.5 text-[#D4A017] shrink-0" />
-                  <span className="truncate">Admin / Ops</span>
-                </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRole('user');
-                    setLoginError(null);
-                  }}
-                  className={`py-2 px-2 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${role === 'user'
-                      ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+            {/* Drag & Drop / One-Click Credential Cards */}
+            <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200/80 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-amber-950 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-[#D4A017]" />
+                  <span>Credential Cards (Drag & Drop or Click to Fill)</span>
+                </span>
+                <span className="text-[10px] text-amber-700 font-semibold">1-Click Apply</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                {/* Admin Credential Card */}
+                <div
+                  className={`p-2.5 rounded-xl border transition-all ${role === 'admin'
+                    ? 'bg-white border-[#166534] shadow-xs'
+                    : 'bg-white/80 border-slate-200 hover:border-slate-300'
                     }`}
                 >
-                  <User className="w-3.5 h-3.5 text-[#D4A017] shrink-0" />
-                  <span className="truncate">User / Client</span>
-                </button>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-extrabold text-[10px] text-[#166534] flex items-center gap-1">
+                      <Shield className="w-3 h-3 text-[#166534]" /> Admin Portal
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleQuickFillAdmin}
+                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#166534] text-white hover:bg-[#14532d] transition-colors"
+                      title="Apply admin credentials"
+                    >
+                      Fill Admin ↵
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    <div
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, 'nagendrauggirala@gmail.com')}
+                      onClick={() => {
+                        setEmail('nagendrauggirala@gmail.com');
+                        setRole('admin');
+                      }}
+                      className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-green-50/80 border border-slate-200 text-slate-800 font-mono text-[10px] flex items-center justify-between cursor-grab active:cursor-grabbing transition-colors"
+                      title="Drag to Email field or click to fill"
+                    >
+                      <span className="truncate">nagendrauggirala@gmail.com</span>
+                      <Move className="w-2.5 h-2.5 text-slate-400 shrink-0 ml-1" />
+                    </div>
+                    <div
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, 'qwerty@123')}
+                      onClick={() => {
+                        setPassword('qwerty@123');
+                        setRole('admin');
+                      }}
+                      className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-green-50/80 border border-slate-200 text-slate-800 font-mono text-[10px] flex items-center justify-between cursor-grab active:cursor-grabbing transition-colors"
+                      title="Drag to Password field or click to fill"
+                    >
+                      <span>qwerty@123</span>
+                      <Move className="w-2.5 h-2.5 text-slate-400 shrink-0 ml-1" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Employee Credential Card */}
+                <div
+                  className={`p-2.5 rounded-xl border transition-all ${role === 'employee'
+                    ? 'bg-white border-slate-900 shadow-xs'
+                    : 'bg-white/80 border-slate-200 hover:border-slate-300'
+                    }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-extrabold text-[10px] text-slate-900 flex items-center gap-1">
+                      <Users className="w-3 h-3 text-slate-900" /> Employee Portal
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleQuickFillEmployee}
+                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors"
+                      title="Apply employee credentials"
+                    >
+                      Fill Employee ↵
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    <div
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, 'qwerty@gmail.com')}
+                      onClick={() => {
+                        setEmail('qwerty@gmail.com');
+                        setRole('employee');
+                      }}
+                      className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-blue-50/80 border border-slate-200 text-slate-800 font-mono text-[10px] flex items-center justify-between cursor-grab active:cursor-grabbing transition-colors"
+                      title="Drag to Email field or click to fill"
+                    >
+                      <span className="truncate">qwerty@gmail.com</span>
+                      <Move className="w-2.5 h-2.5 text-slate-400 shrink-0 ml-1" />
+                    </div>
+                    <div
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, 'Qwerty@123')}
+                      onClick={() => {
+                        setPassword('Qwerty@123');
+                        setRole('employee');
+                      }}
+                      className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-blue-50/80 border border-slate-200 text-slate-800 font-mono text-[10px] flex items-center justify-between cursor-grab active:cursor-grabbing transition-colors"
+                      title="Drag to Password field or click to fill"
+                    >
+                      <span>Qwerty@123</span>
+                      <Move className="w-2.5 h-2.5 text-slate-400 shrink-0 ml-1" />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Email Field */}
+            {/* Email Field with Drop Support */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-[#0F172A]">
-                  Work Email Address
+                  {role === 'admin' ? 'Admin Email Address' : 'Employee Work Email'}
                 </label>
-                <button
-                  type="button"
-                  onClick={handleQuickFill}
-                  className="text-[11px] text-[#166534] hover:text-[#14532d] flex items-center gap-1 font-semibold cursor-pointer"
-                  title="Quick fill test credentials"
-                >
-                  <Sparkles className="w-3 h-3 text-[#D4A017]" />
-                  <span>Demo fill</span>
-                </button>
+                <span className="text-[10px] text-slate-400">Drag & drop supported</span>
               </div>
               <div className="relative">
                 <input
@@ -450,10 +601,12 @@ export const Login: React.FC<LoginProps> = ({
                   required
                   value={email}
                   onChange={(e) => handleEmailChange(e.target.value)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={handleDropEmail}
                   placeholder={
                     role === 'admin'
-                      ? 'admin@knfinance.com'
-                      : 'employee@knfinance.com'
+                      ? 'nagendrauggirala@gmail.com'
+                      : 'qwerty@gmail.com'
                   }
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-[#0F172A] text-xs focus:outline-none focus:border-[#166534] transition-all"
                 />
@@ -461,7 +614,7 @@ export const Login: React.FC<LoginProps> = ({
               </div>
             </div>
 
-            {/* Password Field with Forgot Password trigger */}
+            {/* Password Field with Drop Support */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-[#0F172A]">Password</label>
@@ -484,6 +637,8 @@ export const Login: React.FC<LoginProps> = ({
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={handleDropPassword}
                   placeholder="••••••••••••"
                   className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-[#0F172A] text-xs focus:outline-none focus:border-[#166534] transition-all"
                 />
@@ -499,31 +654,37 @@ export const Login: React.FC<LoginProps> = ({
               </div>
             </div>
 
+
+
             {/* Submit Button */}
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-3 rounded-xl text-xs font-extrabold text-white bg-[#166534] hover:bg-[#14532d] shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer mt-2 disabled:opacity-75"
+              className={`w-full py-3 rounded-xl text-xs font-extrabold text-white shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer mt-2 disabled:opacity-75 ${role === 'admin'
+                ? 'bg-[#166534] hover:bg-[#14532d]'
+                : 'bg-slate-900 hover:bg-slate-800'
+                }`}
             >
               {isSubmitting ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin text-[#D4A017]" />
-                  <span>Authenticating...</span>
+                  <span>Authenticating credentials...</span>
                 </>
               ) : (
                 <>
                   <span>
                     {role === 'admin'
-                      ? 'Sign In to Admin Portal'
-                      : 'Sign In to Workspace'}
+                      ? 'Sign In to Admin Portal (నిర్వాహకుడు)'
+                      : 'Sign In to Employee Portal (ఫీల్డ్ ఆఫీసర్)'}
                   </span>
                   <ArrowRight className="w-4 h-4 text-[#D4A017]" />
                 </>
               )}
             </button>
 
+
             {/* First time setup option */}
-            <div className="pt-2 text-center text-xs text-slate-500">
+            <div className="pt-1 text-center text-xs text-slate-500">
               <span>First time login or invited? </span>
               <button
                 type="button"

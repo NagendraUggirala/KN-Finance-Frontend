@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { CheckCircle2, X } from 'lucide-react';
+import { CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 // Components & Layout
 import { Navbar } from './components/Navbar';
@@ -16,6 +16,7 @@ import { DashboardPreview } from './Pages/Landingpages/DashboardPreview';
 import { AdminDashboard } from './Pages/AdminDashboard/AdminDashboard';
 import { SuperadminDashboard } from './Pages/SuperadminDashboard/SuperadminDashboard';
 import { SuperadminLogin } from './Pages/Landingpages/SuperadminLogin';
+import { EmployeeDashboard } from './Pages/EmployeeDashboard/EmployeeDashboard';
 import { isSuperAdminAuthenticated, superAdminLogout } from './lib/api';
 
 // Styles
@@ -56,6 +57,8 @@ export function App() {
       navigate('/super-admin');
     } else if (role === 'admin') {
       navigate('/admin');
+    } else if (role === 'employee') {
+      navigate('/employee');
     } else {
       navigate('/dashboard');
     }
@@ -90,27 +93,46 @@ export function App() {
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-[#0F172A] flex flex-col font-sans selection:bg-[#166534] selection:text-white">
 
-      {/* Toast Notification Banner */}
-      {toastMessage && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white border border-slate-300 text-[#0F172A] shadow-xl animate-in slide-in-from-bottom-5 duration-300"
-        >
-          <CheckCircle2 className="w-5 h-5 text-[#16A34A] shrink-0" />
-          <span className="text-xs font-bold">{toastMessage}</span>
-          <button
-            onClick={() => setToastMessage(null)}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 transition-colors"
-            aria-label="Dismiss Notification"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      {/* Toast Notification Banner - Centered at top, high z-index, visible on mobile & desktop */}
+      {toastMessage && (() => {
+        const isError = Boolean(
+          toastMessage.toLowerCase().includes('fail') ||
+          toastMessage.toLowerCase().includes('error') ||
+          toastMessage.toLowerCase().includes('status 5') ||
+          toastMessage.toLowerCase().includes('status 4')
+        );
 
-      {/* Top Navigation Bar (Hidden on Super Admin / Admin portals & Superadmin login) */}
-      {!location.pathname.startsWith('/super-admin') && !location.pathname.startsWith('/admin') && !location.pathname.startsWith('/superadmin') && (
+        return (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`fixed top-5 left-1/2 -translate-x-1/2 z-[9999] flex items-center justify-between gap-3 px-4 py-3 rounded-2xl shadow-2xl max-w-md w-[92%] sm:w-auto min-w-[280px] animate-in slide-in-from-top-4 duration-300 border ${
+              isError
+                ? 'bg-rose-950/95 text-rose-100 border-rose-700/80 backdrop-blur-md'
+                : 'bg-slate-900/95 text-white border-slate-700/80 backdrop-blur-md'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              {isError ? (
+                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
+              ) : (
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+              )}
+              <span className="text-xs font-bold leading-snug">{toastMessage}</span>
+            </div>
+            <button
+              onClick={() => setToastMessage(null)}
+              className="p-1 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0 ml-2"
+              aria-label="Dismiss Notification"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* Top Navigation Bar (Hidden on Super Admin / Admin / Employee portals & Superadmin login) */}
+      {!location.pathname.startsWith('/super-admin') && !location.pathname.startsWith('/admin') && !location.pathname.startsWith('/employee') && !location.pathname.startsWith('/superadmin') && (
         <Navbar
           isLoggedIn={isLoggedIn}
           userName={userName}
@@ -163,6 +185,16 @@ export function App() {
             }
           />
           <Route
+            path="/employee"
+            element={
+              <EmployeeDashboard
+                userName={userName}
+                onShowToast={showToast}
+                onLogout={handleLogout}
+              />
+            }
+          />
+          <Route
             path="/admin"
             element={
               <AdminDashboard
@@ -173,7 +205,29 @@ export function App() {
             }
           />
           <Route
+            path="/admin/audit-logs"
+            element={
+              <AdminDashboard
+                userName={userName}
+                onShowToast={showToast}
+                onLogout={handleLogout}
+              />
+            }
+          />
+          <Route
             path="/super-admin"
+            element={
+              <SuperAdminProtectedRoute onShowToast={showToast}>
+                <SuperadminDashboard
+                  userName={userName}
+                  onShowToast={showToast}
+                  onLogout={handleSuperadminLogout}
+                />
+              </SuperAdminProtectedRoute>
+            }
+          />
+          <Route
+            path="/super-admin/audit-logs"
             element={
               <SuperAdminProtectedRoute onShowToast={showToast}>
                 <SuperadminDashboard
@@ -206,8 +260,8 @@ export function App() {
         </Routes>
       </main>
 
-      {/* Footer (Hidden on Admin / Super Admin Portals & Login for full workspace feel) */}
-      {!location.pathname.startsWith('/super-admin') && !location.pathname.startsWith('/admin') && !location.pathname.startsWith('/superadmin') && (
+      {/* Footer (Hidden on Admin / Super Admin / Employee Portals & Login for full workspace feel) */}
+      {!location.pathname.startsWith('/super-admin') && !location.pathname.startsWith('/admin') && !location.pathname.startsWith('/employee') && !location.pathname.startsWith('/superadmin') && (
         <Footer onShowToast={showToast} />
       )}
 

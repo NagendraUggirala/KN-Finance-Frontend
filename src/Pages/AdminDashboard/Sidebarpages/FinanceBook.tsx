@@ -1,14 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Printer, 
-  Search, 
-  Plus, 
-  Edit2, 
-  Save, 
-  X, 
-  Trash2, 
-  FileSpreadsheet, 
-  Download 
+import {
+  Printer,
+  Search,
+  Plus,
+  Edit2,
+  Save,
+  X,
+  Trash2,
+  FileSpreadsheet,
+  Download,
+  RefreshCw,
+  Clock,
+  AlertCircle,
+  CheckCircle2,
+  BookOpen,
+  Sparkles,
+  WifiOff
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { Employee, FinanceRecord } from '../types';
@@ -17,6 +24,11 @@ import {
   transliterateTeluguToEnglish,
   isTeluguText
 } from './transliterate';
+import {
+  getActiveFinanceBookApi,
+  batchSaveFinanceBookApi,
+  updateBorrowerStatusApi
+} from '../../../lib/api';
 
 interface FinanceBookProps {
   records: FinanceRecord[];
@@ -33,16 +45,23 @@ export interface LedgerPayment {
 
 interface LedgerRowData {
   id: string;
+  _id?: string;
   date: string; // Borrow Date
+  borrowDate?: string;
   sNo: string;
   name: string; // primary display name
   nameTelugu: string; // Telugu script name
   nameEnglish: string; // English script name
   item: string;
+  productItem?: string;
   amount: string;
+  principalAmount?: number;
   payments: { [key: number]: LedgerPayment };
   initialRemaining?: string;
   remaining?: string;
+  remainingBalance?: number;
+  totalPaid?: number;
+  interestRate?: number;
   isClosed?: boolean;
 }
 
@@ -65,6 +84,22 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [tempRows, setTempRows] = useState<LedgerRowData[]>([]);
   const [tempDateColumns, setTempDateColumns] = useState<string[]>([]);
+
+  // Backend Cloud Synchronization State
+  const [ledgerBookId, setLedgerBookId] = useState<string>('');
+  const [ledgerVersion, setLedgerVersion] = useState<number>(1);
+  const [isSyncingWithBackend, setIsSyncingWithBackend] = useState<boolean>(true);
+  const [lastSyncTime, setLastSyncTime] = useState<string>('');
+  const [loadingSeconds, setLoadingSeconds] = useState<number>(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isOfflineBypassed, setIsOfflineBypassed] = useState<boolean>(false);
+
+  // In-component Save Status & Notification
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveNotification, setSaveNotification] = useState<{
+    type: 'saving' | 'success' | 'error';
+    message: string;
+  } | null>(null);
 
   // Helper variables for reading vs editing
   const currentRows = isEditing ? tempRows : rows;
@@ -93,33 +128,132 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
     setIsEditing(true);
   };
 
-  // Save Edit Changes
-  const handleSave = () => {
-    setRows(tempRows);
-    setDateColumns(tempDateColumns);
-    setIsEditing(false);
-    onShowToast('Ledger changes saved successfully!');
+  // Save Edit Changes (POST /api/v1/finance-book/batch-save)
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSaveNotification({
+      type: 'saving',
+      message: 'Saving and synchronizing ledger changes to cloud database... ⏳'
+    });
+
+    // Clean, validate and prepare batch save payload
+    const cleanedRows = tempRows.map((r, idx) => {
+      const sNoNum = parseInt(String(r.sNo), 10) || idx + 1;
+      const teName = (r.nameTelugu || r.name || r.nameEnglish || `ఆసామి ${sNoNum}`).trim();
+      const enName = (r.nameEnglish || '').trim();
+      const productItem = (r.item || r.productItem || 'Daily Terms').trim() || 'Daily Terms';
+      const principalNum = parseFloat(String(r.amount).replace(/,/g, '')) || 0;
+      const initialRemainingNum =
+        parseFloat(String(r.initialRemaining || r.amount).replace(/,/g, '')) || Math.round(principalNum * 1.2 * 1.05);
+
+      const formattedPayments: Record<string, { date: string; amount: number; paymentType?: string }> = {};
+      Object.entries(r.payments || {}).forEach(([k, p]) => {
+        const colNum = parseInt(k, 10);
+        if (!isNaN(colNum) && colNum >= 0) {
+          formattedPayments[k] = {
+            date: p.date || tempDateColumns[colNum] || '08-08',
+            amount: parseFloat(String(p.amount).replace(/,/g, '')) || 0,
+            paymentType: (p as any).paymentType || 'Cash'
+          };
+        }
+      });
+
+      // Only pass MongoDB ObjectId if valid 24-char hex string
+      const isValidId = Boolean(r.id && /^[0-9a-fA-F]{24}$/.test(r.id));
+
+      return {
+        id: isValidId ? r.id : undefined,
+        sNo: sNoNum,
+        date: r.date || '08-08',
+        borrowDate: r.date || '08-08',
+        nameTelugu: teName,
+        nameEnglish: enName,
+        item: productItem,
+        productItem: productItem,
+        amount: principalNum,
+        principalAmount: principalNum,
+        initialRemaining: initialRemainingNum,
+        interestRate: Number(r.interestRate) || 5,
+        isClosed: !!r.isClosed,
+        payments: formattedPayments
+      };
+    });
+
+    const batchPayload = {
+      ledgerBookId: ledgerBookId && /^[0-9a-fA-F]{24}$/.test(ledgerBookId) ? ledgerBookId : undefined,
+      version: ledgerVersion,
+      dateColumns: tempDateColumns,
+      rows: cleanedRows
+    };
+
+    try {
+      const saveRes = await batchSaveFinanceBookApi(batchPayload);
+      setRows(tempRows);
+      setDateColumns(tempDateColumns);
+      setIsEditing(false);
+
+      if (saveRes?.data?.ledgerBook?.version) {
+        setLedgerVersion(saveRes.data.ledgerBook.version);
+      }
+      if (saveRes?.data?.ledgerBook?.id) {
+        setLedgerBookId(saveRes.data.ledgerBook.id);
+      }
+
+      const syncTime = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+      setLastSyncTime(syncTime);
+      setSaveNotification({
+        type: 'success',
+        message: saveRes?.message || 'All ledger changes successfully saved to database! 💾'
+      });
+      onShowToast('All ledger changes successfully saved to database! 💾');
+
+      // Auto clear success notice after 6 seconds
+      setTimeout(() => {
+        setSaveNotification((prev) => (prev?.type === 'success' ? null : prev));
+      }, 6000);
+    } catch (err: any) {
+      console.error('Batch save error:', err);
+      // Keep changes in editor so user does not lose edits
+      const errMsg = err?.message || 'Server error occurred while saving';
+      setSaveNotification({
+        type: 'error',
+        message: `Database Save Error: ${errMsg}. Local edits are preserved in editor.`
+      });
+      onShowToast(`Save Error: ${errMsg}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Cancel Edit Session
   const handleCancel = () => {
     setIsEditing(false);
+    setSaveNotification(null);
     onShowToast('Edit cancelled.');
   };
 
-  // Toggle Row Closed Status
-  const handleToggleClosed = (rowId: string) => {
+  // Toggle Row Closed Status (PATCH /api/v1/finance-book/rows/:id/status)
+  const handleToggleClosed = async (rowId: string) => {
     if (!isEditing) return;
+    const target = tempRows.find(r => r.id === rowId);
+    const nextClosed = target ? !target.isClosed : false;
+
     const updated = tempRows.map(r => {
       if (r.id === rowId) {
         return {
           ...r,
-          isClosed: !r.isClosed
+          isClosed: nextClosed
         };
       }
       return r;
     });
     setTempRows(updated);
+
+    try {
+      await updateBorrowerStatusApi(rowId, nextClosed);
+    } catch (err) {
+      console.warn('Update borrower status notice:', err);
+    }
   };
 
   // Add new date column
@@ -191,8 +325,113 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
     }
   }, []);
 
+  // Track loading elapsed seconds to detect delayed network / cold start
+  useEffect(() => {
+    let timer: any = null;
+    if (isSyncingWithBackend) {
+      timer = setInterval(() => {
+        setLoadingSeconds((s) => s + 1);
+      }, 1000);
+    } else {
+      setLoadingSeconds(0);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isSyncingWithBackend]);
+
+  // Fetch Active Ledger from Cloud Backend (GET /api/v1/finance-book/active)
+  const fetchActiveLedger = async () => {
+    setIsSyncingWithBackend(true);
+    setLoadError(null);
+    setLoadingSeconds(0);
+    try {
+      const res = await getActiveFinanceBookApi();
+      if (res?.data) {
+        if (res.data.ledgerBook?.id) {
+          setLedgerBookId(res.data.ledgerBook.id);
+        }
+        if (res.data.ledgerBook?.version) {
+          setLedgerVersion(res.data.ledgerBook.version);
+        }
+        if (res.data.dateColumns && res.data.dateColumns.length > 0) {
+          setDateColumns(res.data.dateColumns);
+        }
+        if (res.data.rows && res.data.rows.length > 0) {
+          const loadedRows: LedgerRowData[] = res.data.rows.map((r, idx) => {
+            const paymentsMap: { [key: number]: LedgerPayment } = {};
+            if (r.payments) {
+              Object.entries(r.payments).forEach(([k, p]) => {
+                paymentsMap[parseInt(k, 10)] = {
+                  date: p.date || '',
+                  amount: String(p.amount ?? '')
+                };
+              });
+            }
+            return {
+              id: r.id || `row-${idx}`,
+              _id: r.id,
+              sNo: String(r.sNo || idx + 1),
+              date: r.date || r.borrowDate || '03-08',
+              borrowDate: r.borrowDate || r.date || '03-08',
+              name: r.nameTelugu,
+              nameTelugu: r.nameTelugu,
+              nameEnglish: r.nameEnglish || '',
+              item: r.item || r.productItem || '',
+              productItem: r.productItem || r.item || '',
+              amount: String(r.amount ?? r.principalAmount ?? ''),
+              principalAmount: Number(r.principalAmount ?? r.amount ?? 0),
+              initialRemaining: String(r.initialRemaining ?? r.amount ?? ''),
+              remaining: String(r.remainingBalance ?? r.initialRemaining ?? r.amount ?? ''),
+              remainingBalance: Number(r.remainingBalance ?? 0),
+              totalPaid: Number(r.totalPaid ?? 0),
+              interestRate: Number(r.interestRate ?? 5),
+              isClosed: !!r.isClosed,
+              payments: paymentsMap
+            };
+          });
+          setRows(loadedRows);
+          setLastSyncTime(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
+        }
+      }
+    } catch (err: any) {
+      console.warn('Backend active ledger fetch notice:', err.message);
+      setLoadError(err.message || 'Unable to connect to cloud database server.');
+    } finally {
+      setIsSyncingWithBackend(false);
+    }
+  };
+
+  // Start offline / manual mode when data response is delayed or user chooses manual entry
+  const handleStartOffline = () => {
+    setIsOfflineBypassed(true);
+    setIsSyncingWithBackend(false);
+    if (rows.length === 0) {
+      const initialRow: LedgerRowData = {
+        id: `row-1-${Date.now()}`,
+        date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' }).replace('/', '-'),
+        sNo: '1',
+        name: '',
+        nameTelugu: '',
+        nameEnglish: '',
+        item: 'Weekly Terms',
+        amount: '',
+        payments: {},
+        isClosed: false
+      };
+      setRows([initialRow]);
+      setTempRows([initialRow]);
+      setTempDateColumns([...dateColumns]);
+      setIsEditing(true);
+      onShowToast('Started manual offline ledger. Enter borrower details and save anytime! 📝');
+    } else {
+      setIsEditing(true);
+    }
+  };
+
   // Initialize ledger rows & date columns from database records
   useEffect(() => {
+    fetchActiveLedger();
     // Strictly start with exactly one date column
     const initialDates = ['08-08'];
     setDateColumns(initialDates);
@@ -200,71 +439,9 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
     // Initialize active rows list with Telugu & English names
     const activeList: LedgerRowData[] = [];
 
-    const sampleData: {
-      date: string;
-      nameTelugu: string;
-      nameEnglish: string;
-      item: string;
-      amount: string;
-      payments: { [key: number]: LedgerPayment };
-    }[] = [
-        {
-          date: '03-08',
-          nameTelugu: 'కృష్ణారావు',
-          nameEnglish: 'Krishna Rao',
-          item: 'బంగారు గాజులు',
-          amount: '15000',
-          payments: { 0: { date: '08-08', amount: '500' } }
-        },
-        {
-          date: '05-08',
-          nameTelugu: 'సత్యనారాయణ',
-          nameEnglish: 'Satyanarayana',
-          item: 'వెండి చైన్',
-          amount: '8000',
-          payments: { 0: { date: '10-08', amount: '200' } }
-        },
-        {
-          date: '12-08',
-          nameTelugu: 'పద్మావతి',
-          nameEnglish: 'Padmavathi',
-          item: 'బంగారు రింగు',
-          amount: '25000',
-          payments: { 0: { date: '08-08', amount: '1000' } }
-        },
-        {
-          date: '18-08',
-          nameTelugu: 'రామచంద్రుడు',
-          nameEnglish: 'Ramachandrudu',
-          item: 'నల్లపూసలు',
-          amount: '12000',
-          payments: { 0: { date: '09-08', amount: '300' } }
-        },
-        {
-          date: '22-08',
-          nameTelugu: 'వెంకటరమణ',
-          nameEnglish: 'Venkataramana',
-          item: 'వెండి గిన్నెలు',
-          amount: '6000',
-          payments: { 0: { date: '11-08', amount: '200' } }
-        }
-      ];
 
-    sampleData.forEach((sample, index) => {
-      activeList.push({
-        id: `row-${index}-${Date.now()}-${Math.random()}`,
-        date: sample.date,
-        sNo: (index + 1).toString(),
-        name: sample.nameTelugu,
-        nameTelugu: sample.nameTelugu,
-        nameEnglish: sample.nameEnglish,
-        item: sample.item,
-        amount: sample.amount,
-        initialRemaining: sample.amount,
-        payments: { ...sample.payments },
-        isClosed: false
-      });
-    });
+
+
 
     // Match database records starts
     if (records && records.length > 0) {
@@ -312,9 +489,8 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
           isClosed: rec.isClosed || false
         });
       });
+      setRows(activeList);
     }
-
-    setRows(activeList);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1018,28 +1194,49 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
       `}} />
 
       {/* 1. External Control Panel above the book (Hidden in print) */}
-      <div className="no-print flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-slate-900/90 backdrop-blur-md text-slate-200 p-4 rounded-xl border border-slate-800 shadow-xl">
+      <div className="no-print flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4 p-4 rounded-2xl bg-white border border-slate-200 shadow-xs">
 
         {/* Search filter input */}
-        <div className="relative w-full xl:w-80">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+        <div className="relative w-full lg:w-96 flex-shrink-0">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="పేరు (తెలుగు / English) లేదా నెంబర్ ద్వారా వెతకండి..."
-            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-850 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-400 focus:outline-none focus:border-amber-500 transition-colors"
+            className="w-full h-10 pl-10 pr-9 text-xs sm:text-[13px] bg-slate-50/80 hover:bg-slate-100/70 focus:bg-white border border-slate-200 focus:border-[#166534] focus:ring-2 focus:ring-[#166534]/15 rounded-xl text-slate-900 placeholder-slate-400 transition-all outline-none font-medium"
           />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full transition-colors"
+              title="Clear search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         {/* Action Controls - Single Row */}
-        <div className="flex items-center flex-wrap sm:flex-nowrap gap-2 overflow-x-auto pb-1 sm:pb-0">
+        <div className="flex items-center flex-wrap sm:flex-nowrap gap-2 sm:gap-2.5 overflow-x-auto pb-1 sm:pb-0 justify-start lg:justify-end w-full lg:w-auto">
+          {/* Cloud Sync Status Badge & Refresh Button */}
+          <button
+            onClick={fetchActiveLedger}
+            disabled={isSyncingWithBackend}
+            className="h-10 px-3 inline-flex items-center justify-center gap-1.5 text-xs font-bold rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all border border-slate-200"
+            title="Sync Ledger with Cloud Backend"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingWithBackend ? 'animate-spin text-[#166534]' : 'text-slate-500'}`} />
+            <span className="hidden sm:inline">{isSyncingWithBackend ? `Syncing (${loadingSeconds}s)...` : lastSyncTime ? `Synced ${lastSyncTime}` : 'Sync DB'}</span>
+          </button>
+
           {!isEditing ? (
             <>
               {/* 1. Edit Ledger Button */}
               <button
                 onClick={handleStartEdit}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-amber-500/60 whitespace-nowrap"
+                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap"
                 title="Edit ledger entries and columns"
               >
                 <Edit2 className="w-3.5 h-3.5 text-amber-100" />
@@ -1049,27 +1246,27 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
               {/* 2. Excel Sheet Button */}
               <button
                 onClick={handleExportExcel}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-emerald-500/50 whitespace-nowrap"
+                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-[#166534] hover:from-emerald-700 hover:to-[#14532d] text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap"
                 title="Export complete book ledger data to Excel spreadsheet (.xlsx)"
               >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-100" />
                 <span>Excel Sheet</span>
               </button>
 
               {/* 3. Export Page Data Button */}
               <button
                 onClick={handleExportCSV}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-700 hover:to-blue-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-sky-500/50 whitespace-nowrap"
+                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-700 hover:to-blue-800 text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap"
                 title="Export current page data as CSV"
               >
-                <Download className="w-3.5 h-3.5 text-sky-200" />
+                <Download className="w-3.5 h-3.5 text-sky-100" />
                 <span>Export Page Data</span>
               </button>
 
               {/* 4. Print Ledger Button */}
               <button
                 onClick={handlePrint}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-indigo-600 to-slate-800 hover:from-indigo-700 hover:to-slate-900 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-indigo-500/50 whitespace-nowrap"
+                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-slate-900 to-indigo-950 hover:from-black hover:to-indigo-900 text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap"
                 title="Print official finance ledger format"
               >
                 <Printer className="w-3.5 h-3.5 text-indigo-200" />
@@ -1081,36 +1278,49 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
               {/* Save Changes Button */}
               <button
                 onClick={handleSave}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-teal-700 whitespace-nowrap"
+                disabled={isSaving}
+                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-[#166534] hover:from-emerald-700 hover:to-[#14532d] text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap disabled:opacity-75 cursor-pointer"
               >
-                <Save className="w-3.5 h-3.5 text-emerald-200" />
-                <span>Save Changes</span>
+                {isSaving ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-100" />
+                    <span>Saving Changes...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5 text-emerald-100" />
+                    <span>Save Changes</span>
+                  </>
+                )}
               </button>
 
               {/* Cancel Button */}
               <button
                 onClick={handleCancel}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-700 hover:to-red-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-red-700 whitespace-nowrap"
+                disabled={isSaving}
+                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 shadow-xs hover:shadow-sm transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer disabled:opacity-60"
               >
-                <X className="w-3.5 h-3.5 text-red-200" />
+                <X className="w-3.5 h-3.5 text-rose-500" />
                 <span>Cancel</span>
               </button>
 
               {/* Add Column */}
               <button
                 onClick={handleAddColumn}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-amber-700 whitespace-nowrap"
+                disabled={isSaving}
+                className="h-10 px-3.5 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 shadow-xs transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer disabled:opacity-60"
               >
-                <Plus className="w-3.5 h-3.5 text-amber-200" />
+                <Plus className="w-3.5 h-3.5 text-amber-700" />
                 <span>Add Date Column</span>
               </button>
 
               {/* Add Row */}
               <button
                 onClick={handleAddRow}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs bg-gradient-to-r from-teal-600 to-cyan-700 hover:from-teal-700 hover:to-cyan-800 text-white rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] font-bold shadow-md border border-teal-700 whitespace-nowrap"
+                disabled={isSaving}
+                className="h-10 px-3.5 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 shadow-xs transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer disabled:opacity-60"
               >
-                <Plus className="w-3.5 h-3.5 text-cyan-200" />
+                <Plus className="w-3.5 h-3.5 text-teal-700" />
                 <span>Add Person Row</span>
               </button>
             </>
@@ -1118,271 +1328,276 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
         </div>
       </div>
 
+      {/* Real-time Save & Sync Status Banner */}
+      {saveNotification && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`p-3.5 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold transition-all shadow-sm ${
+            saveNotification.type === 'success'
+              ? 'bg-emerald-50 text-emerald-950 border border-emerald-300'
+              : saveNotification.type === 'error'
+              ? 'bg-rose-50 text-rose-950 border border-rose-300'
+              : 'bg-amber-50 text-amber-950 border border-amber-300'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            {saveNotification.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
+            {saveNotification.type === 'error' && <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+            {saveNotification.type === 'saving' && <RefreshCw className="w-4 h-4 text-amber-600 animate-spin shrink-0" />}
+            <span>{saveNotification.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSaveNotification(null)}
+            className="p-1 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+            aria-label="Close notification"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* 2. Outer Desk Frame containing the Open Book Spread */}
       <div className="screen-only-book print:hidden">
-        <div className="desk-bg flex-1 p-2 md:p-6 lg:p-10 rounded-2xl flex items-start justify-start overflow-x-auto scrollbar-book">
+        {/* Delayed Sync Banner when records are already on screen */}
+        {isSyncingWithBackend && rows.length > 0 && (
+          <div className="no-print mb-4 mx-auto w-full max-w-5xl bg-gradient-to-r from-amber-50 via-amber-100/70 to-amber-50 border border-amber-300 rounded-2xl p-3.5 shadow-sm animate-in fade-in duration-300">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-200/80 rounded-xl text-amber-800 flex-shrink-0 animate-pulse">
+                  <RefreshCw className="w-4 h-4 animate-spin text-amber-700" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-amber-950 text-xs sm:text-sm">
+                      ఖాతా పుస్తకం సింక్ అవుతోంది (Syncing Ledger with Cloud Database)
+                    </span>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-200/90 text-amber-900">
+                      {loadingSeconds}s
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 mt-0.5">
+                    {loadingSeconds >= 3
+                      ? 'Server response is taking longer than usual (Render cloud instance waking up from sleep).'
+                      : 'Connecting to database to verify latest entries and payment updates...'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-center">
+                {loadingSeconds >= 3 && (
+                  <button
+                    onClick={fetchActiveLedger}
+                    className="px-3 py-1.5 text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retry Sync</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsSyncingWithBackend(false)}
+                  className="px-3 py-1.5 text-xs font-bold bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 rounded-xl transition-all"
+                >
+                  Keep Local Data
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
-        {/* Book Spread Inner Content */}
-        <div
-          className="book-spread book-stacked-shadow paper-grain flex flex-row select-none relative overflow-hidden transition-all duration-300 mx-auto"
-          style={{ width: `${bookSpreadWidth}px`, minWidth: `${bookSpreadWidth}px` }}
-        >
+        <div className="desk-bg flex-1 p-2 md:p-6 lg:p-10 rounded-2xl flex items-start justify-center overflow-x-auto scrollbar-book min-h-[580px]">
+          {isSyncingWithBackend && rows.length === 0 && !isOfflineBypassed ? (
+            /* Dedicated Ledger Loading Container with Late-Data Handling */
+            <div className="max-w-2xl w-full bg-[#fdfbf7] paper-grain rounded-3xl p-6 sm:p-10 border-2 border-[#b45309]/30 shadow-2xl relative overflow-hidden text-center my-6 mx-auto animate-in fade-in zoom-in-95 duration-300">
+              {/* Decorative Vintage Book Corner Ornaments */}
+              <div className="absolute top-3 left-3 w-8 h-8 border-t-2 border-l-2 border-amber-800/40 rounded-tl-lg pointer-events-none" />
+              <div className="absolute top-3 right-3 w-8 h-8 border-t-2 border-r-2 border-amber-800/40 rounded-tr-lg pointer-events-none" />
+              <div className="absolute bottom-3 left-3 w-8 h-8 border-b-2 border-l-2 border-amber-800/40 rounded-bl-lg pointer-events-none" />
+              <div className="absolute bottom-3 right-3 w-8 h-8 border-b-2 border-r-2 border-amber-800/40 rounded-br-lg pointer-events-none" />
+
+              {/* Top Emblem */}
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-100/80 border border-amber-300/80 text-amber-900 text-xs font-bold mb-4 shadow-2xs">
+                <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                <span>శ్రీ లక్ష్మీ గణపతి ఫైనాన్స్ • KN FINANCE</span>
+              </div>
+
+              {/* Animated Spinner & Primary Title */}
+              <div className="relative my-4 flex flex-col items-center">
+                <div className="relative flex items-center justify-center w-20 h-20">
+                  <div className="absolute inset-0 rounded-full border-4 border-amber-200 border-t-[#166534] animate-spin" />
+                  <BookOpen className="w-8 h-8 text-amber-800" />
+                </div>
+
+                <h3 className="text-xl sm:text-2xl font-extrabold text-amber-950 font-serif mt-5 tracking-wide">
+                  ఖాతా పుస్తకం వివరాలు లోడ్ అవుతున్నాయి...
+                </h3>
+                <p className="text-xs sm:text-sm font-semibold text-amber-800/85 mt-1.5">
+                  Loading Active Finance Book Ledger from Cloud Database
+                </p>
+
+                {/* Elapsed Time Ticker */}
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-200/90 text-amber-900 text-xs font-mono font-bold mt-4">
+                  <Clock className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Elapsed Time: {loadingSeconds}s</span>
+                </div>
+              </div>
+
+              {/* Skeleton Preview of the Book Columns */}
+              <div className="mt-6 mb-6 p-3.5 bg-amber-50/50 rounded-2xl border border-amber-200/60 max-w-lg mx-auto">
+                <div className="flex items-center justify-between text-[11px] font-bold text-amber-900/70 mb-2 px-1">
+                  <span>S.No • Date • Borrower • Installments</span>
+                  <span className="font-mono text-emerald-800 font-semibold">Reading Ledger DB...</span>
+                </div>
+                <div className="space-y-2">
+                  <div className="h-3 bg-amber-200/40 rounded-full animate-pulse w-full" />
+                  <div className="h-3 bg-amber-200/30 rounded-full animate-pulse w-5/6" />
+                  <div className="h-3 bg-amber-200/40 rounded-full animate-pulse w-4/6" />
+                </div>
+              </div>
+
+              {/* LATE DATA NOTIFICATION & OPTIONS (Appears when loadingSeconds >= 3 or on loadError) */}
+              {(loadingSeconds >= 3 || loadError) && (
+                <div className="mt-4 pt-4 border-t border-amber-200/80 animate-in fade-in duration-300">
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border border-amber-300/80 text-left shadow-xs">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-amber-200/80 rounded-xl text-amber-800 flex-shrink-0 mt-0.5">
+                        <AlertCircle className="w-5 h-5 text-amber-700" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <h4 className="text-sm font-bold text-amber-950">
+                            {loadError
+                              ? 'క్లౌడ్ కనెక్షన్ విఫలమైంది (Cloud Connection Delayed)'
+                              : 'డేటా లోడ్ అవ్వడం ఆలస్యం అవుతోంది (Data is taking longer than usual)'}
+                          </h4>
+                          <span className="text-[10px] font-mono font-bold bg-amber-200 px-2 py-0.5 rounded-full text-amber-900">
+                            Slow Response ({loadingSeconds}s)
+                          </span>
+                        </div>
+                        <p className="text-xs text-amber-850 mt-1 leading-relaxed">
+                          {loadError
+                            ? `${loadError} - Cloud database on Render spins down when inactive. Waking it up may take 15–30 seconds.`
+                            : 'The backend cloud database server is waking up from idle sleep mode (Render cold start). You can choose to wait, retry connection, or start working offline immediately.'}
+                        </p>
+
+                        {/* Interactive Action Buttons */}
+                        <div className="flex flex-wrap items-center gap-2.5 mt-3.5">
+                          <button
+                            type="button"
+                            onClick={fetchActiveLedger}
+                            className="px-3.5 py-2 text-xs font-bold rounded-xl bg-amber-700 hover:bg-amber-800 text-white shadow-xs transition-all flex items-center gap-1.5 active:scale-95"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Retry Connection (మళ్లీ ప్రయత్నించండి)</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleStartOffline}
+                            className="px-3.5 py-2 text-xs font-bold rounded-xl bg-[#166534] hover:bg-[#14532d] text-white shadow-xs transition-all flex items-center gap-1.5 active:scale-95"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Start Working Offline (కొత్త ఖాతా ప్రారంభించండి)</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsOfflineBypassed(true);
+                              setIsSyncingWithBackend(false);
+                              onShowToast('Switched to offline view.');
+                            }}
+                            className="px-3 py-2 text-xs font-bold rounded-xl bg-white hover:bg-amber-100/70 text-amber-800 border border-amber-300 shadow-2xs transition-all flex items-center gap-1.5"
+                          >
+                            <WifiOff className="w-3.5 h-3.5" />
+                            <span>Dismiss / Work Offline</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : rows.length === 0 && !isEditing ? (
+            /* Empty Ledger State when sync is done and 0 rows */
+            <div className="max-w-xl w-full bg-[#fdfbf7] paper-grain rounded-3xl p-8 sm:p-10 border-2 border-amber-800/20 shadow-2xl relative text-center my-8 mx-auto animate-in fade-in duration-300">
+              <div className="w-16 h-16 rounded-2xl bg-amber-100 flex items-center justify-center mx-auto mb-4 text-amber-800 shadow-inner">
+                <BookOpen className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-extrabold text-amber-950 font-serif">
+                ఖాతా పుస్తకంలో రికార్డులు లేవు
+              </h3>
+              <p className="text-xs sm:text-sm text-amber-800/80 font-medium mt-1.5 max-w-md mx-auto">
+                No active ledger accounts found. You can add the first borrower account row or synchronize with the cloud database.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
+                <button
+                  type="button"
+                  onClick={handleStartOffline}
+                  className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-[#166534] hover:from-emerald-700 hover:to-[#14532d] text-white shadow-md transition-all flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>కొత్త ఖాతా ప్రారంభించండి (Add First Person)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={fetchActiveLedger}
+                  className="px-4 py-2.5 text-xs font-bold rounded-xl bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 shadow-xs transition-all flex items-center gap-2"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Sync from Cloud (క్లౌడ్ నుండి పొందండి)</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Book Spread Inner Content */
+            <div
+              className="book-spread book-stacked-shadow paper-grain flex flex-row select-none relative overflow-hidden transition-all duration-300 mx-auto"
+              style={{ width: `${bookSpreadWidth}px`, minWidth: `${bookSpreadWidth}px` }}
+            >
 
 
-          {/* ========================================================
+            {/* ========================================================
               LEFT PAGE SPREAD (S.No, Borrow Date, Telugu Name, English Name, Product, Amount, Installments)
              ======================================================== */}
-          <div
-            className="left-page-curl paper-grain pt-4 pb-6 pl-4 pr-0 relative z-10 flex flex-col items-end"
-            style={{ width: `${leftPageWidth}px` }}
-          >
+            <div
+              className="left-page-curl paper-grain pt-4 pb-6 pl-4 pr-0 relative z-10 flex flex-col items-end"
+              style={{ width: `${leftPageWidth}px` }}
+            >
 
-            <table className="ledger-table w-full table-fixed border-collapse select-text telugu-font">
-              <thead className="bg-[#b45309]/5">
-                {/* Headers Row */}
-                <tr className="double-header-border text-slate-900 font-bold text-center h-[54px] select-none text-[11px] leading-tight">
-                  <th className="ledger-cell-border w-[38px] select-none font-bold align-middle">
-                    వ.సం.<br /><span className="text-[9px] text-slate-500 font-sans font-bold">S.No.</span>
-                  </th>
-                  <th className="ledger-cell-border w-[70px] select-none font-bold align-middle">
-                    తేది<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Borrow Date</span>
-                  </th>
-                  {/* Separate Telugu Name Column */}
-                  <th className="ledger-cell-border w-[130px] select-none font-bold align-middle">
-                    ఆసామి పేరు (తెలుగు)<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Telugu Name</span>
-                  </th>
-                  {/* Separate English Name Column */}
-                  <th className="ledger-cell-border w-[130px] select-none font-bold align-middle">
-                    పేరు (English)<br /><span className="text-[9px] text-slate-500 font-sans font-bold">English Name</span>
-                  </th>
-                  <th className="ledger-cell-border w-[90px] select-none font-bold align-middle">
-                    వస్తువు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Product</span>
-                  </th>
-                  <th className="ledger-cell-border w-[75px] select-none font-bold align-middle">
-                    సొమ్ము<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Amount</span>
-                  </th>
-                  {/* Left side dynamic installment columns */}
-                  {Array.from({ length: leftPageCount }).map((_, dIdx) => (
-                    <th key={dIdx} className={`ledger-cell-border w-[88px] p-0 align-middle ${dIdx === leftPageCount - 1 ? 'border-r-0' : ''}`}>
-                      <div className="relative flex flex-col items-center justify-center h-full px-1 py-1 select-none">
-                        <span className="text-[10px] text-amber-950 font-bold leading-tight">
-                          వాయిదా {dIdx + 1}
-                        </span>
-
-                        <span className="text-[8.5px] text-amber-800/80 font-sans font-bold tracking-tight">
-                          తేది | సొమ్ము
-                        </span>
-                        {isEditing && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteColumn(dIdx)}
-                            className="absolute -top-1.5 right-0.5 text-[10px] text-red-500 hover:text-red-700 bg-white/95 rounded-full w-4 h-4 flex items-center justify-center shadow border border-red-200 no-print"
-                            title="Delete Column"
-                          >
-                            ×
-                          </button>
-                        )}
-                      </div>
+              <table className="ledger-table w-full table-fixed border-collapse select-text telugu-font">
+                <thead className="bg-[#b45309]/5">
+                  {/* Headers Row */}
+                  <tr className="double-header-border text-slate-900 font-bold text-center h-[54px] select-none text-[11px] leading-tight">
+                    <th className="ledger-cell-border w-[38px] select-none font-bold align-middle">
+                      వ.సం.<br /><span className="text-[9px] text-slate-500 font-sans font-bold">S.No.</span>
                     </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRows.map((row, rIdx) => (
-                  <tr key={row.id} className={`h-[48px] hover:bg-slate-500/5 transition-colors ${row.isClosed ? 'bg-slate-100/55 opacity-90' : ''}`}>
-                    {/* SNo cell */}
-                    <td className="ledger-cell-border p-0 text-center font-sans">
-                      <input
-                        type="text"
-                        disabled={!isEditing}
-                        value={row.sNo}
-                        data-row={rIdx}
-                        data-col={1}
-                        onChange={(e) => handleCellChange(row.id, 'sNo', e.target.value)}
-                        onKeyDown={(e) => handleKeyDown(e, rIdx, 1)}
-                        onFocus={() => setActiveCell({ row: rIdx, col: 1 })}
-                        className={`ledger-cell-input text-center font-bold text-slate-800 ${row.isClosed ? 'closed-row-input' : ''}`}
-                      />
-                    </td>
-
-                    {/* Borrow Date cell */}
-                    <td className="ledger-cell-border p-0 text-center font-sans">
-                      <input
-                        type="text"
-                        disabled={!isEditing}
-                        value={row.date}
-                        data-row={rIdx}
-                        data-col={0}
-                        onChange={(e) => handleCellChange(row.id, 'date', e.target.value)}
-                        onKeyDown={(e) => handleKeyDown(e, rIdx, 0)}
-                        onFocus={() => setActiveCell({ row: rIdx, col: 0 })}
-                        className={`ledger-cell-input text-center ${row.isClosed ? 'closed-row-input' : ''}`}
-                        placeholder="DD-MM"
-                      />
-                    </td>
-
-                    {/* Separate Telugu Name cell */}
-                    <td className="ledger-cell-border p-0 text-left telugu-font">
-                      <div className="flex items-center w-full h-full relative">
-                        {isEditing && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteRow(row.id)}
-                            className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded no-print ml-1 flex-shrink-0"
-                            title="Delete Person"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        <input
-                          type="text"
-                          disabled={!isEditing}
-                          value={row.nameTelugu || ''}
-                          data-row={rIdx}
-                          data-col={2}
-                          onChange={(e) => handleNameChange(row.id, 'telugu', e.target.value)}
-                          onKeyDown={(e) => handleKeyDown(e, rIdx, 2)}
-                          onFocus={() => setActiveCell({ row: rIdx, col: 2 })}
-                          className={`ledger-cell-input text-left px-2 font-semibold ${row.isClosed ? 'closed-row-input' : ''}`}
-                          placeholder="తెలుగు పేరు"
-                        />
-                      </div>
-                    </td>
-
-                    {/* Separate English Name cell */}
-                    <td className="ledger-cell-border p-0 text-left font-sans">
-                      <input
-                        type="text"
-                        disabled={!isEditing}
-                        value={row.nameEnglish || ''}
-                        data-row={rIdx}
-                        data-col={3}
-                        onChange={(e) => handleNameChange(row.id, 'english', e.target.value)}
-                        onKeyDown={(e) => handleKeyDown(e, rIdx, 3)}
-                        onFocus={() => setActiveCell({ row: rIdx, col: 3 })}
-                        className={`ledger-cell-input text-left px-2 text-xs font-semibold text-slate-700 ${row.isClosed ? 'closed-row-input' : ''}`}
-                        placeholder="English Name"
-                      />
-                    </td>
-
-                    {/* Item Details cell */}
-                    <td className="ledger-cell-border p-0 text-left">
-                      <input
-                        type="text"
-                        disabled={!isEditing}
-                        value={row.item}
-                        data-row={rIdx}
-                        data-col={4}
-                        onChange={(e) => handleCellChange(row.id, 'item', e.target.value)}
-                        onKeyDown={(e) => handleKeyDown(e, rIdx, 4)}
-                        onFocus={() => setActiveCell({ row: rIdx, col: 4 })}
-                        className={`ledger-cell-input text-left px-2 text-xs text-slate-600 ${row.isClosed ? 'closed-row-input' : ''}`}
-                        placeholder=""
-                      />
-                    </td>
-
-                    {/* Amount cell */}
-                    <td className="ledger-cell-border p-0 text-right font-sans">
-                      <input
-                        type="text"
-                        disabled={!isEditing}
-                        value={row.amount}
-                        data-row={rIdx}
-                        data-col={5}
-                        onChange={(e) => handleCellChange(row.id, 'amount', e.target.value)}
-                        onKeyDown={(e) => handleKeyDown(e, rIdx, 5)}
-                        onFocus={() => setActiveCell({ row: rIdx, col: 5 })}
-                        className={`ledger-cell-input text-right px-1.5 font-bold text-[#166534] ${row.isClosed ? 'closed-row-input' : ''}`}
-                        placeholder=""
-                      />
-                    </td>
-
-                    {/* Date + Amount Installment cells index 0 to leftPageCount - 1 */}
-                    {Array.from({ length: leftPageCount }).map((_, dIdx) => {
-                      const pay = getPayment(row, dIdx);
-                      return (
-                        <td key={dIdx} className={`ledger-cell-border p-0 text-center font-sans bg-amber-50/10 ${dIdx === leftPageCount - 1 ? 'border-r-0' : ''}`}>
-                          {isEditing ? (
-                            <div className="flex flex-col h-full w-full justify-center">
-                              {/* Top Date Input */}
-                              <input
-                                type="text"
-                                value={pay.date}
-                                placeholder="DD-MM"
-                                onChange={(e) => handlePaymentChange(row.id, dIdx, 'date', e.target.value)}
-                                className="w-full text-center text-[10px] font-semibold text-amber-900 bg-amber-50/40 border-b border-amber-200/60 focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
-                                title="Payment Date (DD-MM)"
-                              />
-                              {/* Bottom Amount Input */}
-                              <input
-                                type="text"
-                                value={pay.amount}
-                                placeholder="₹ సొమ్ము"
-                                onChange={(e) => handlePaymentChange(row.id, dIdx, 'amount', e.target.value)}
-                                className="w-full text-center text-[11px] font-bold text-slate-800 bg-transparent focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
-                                title="Payment Amount"
-                              />
-                            </div>
-                          ) : (
-                            <div className={`flex flex-col items-center justify-center h-full py-0.5 leading-tight select-text ${row.isClosed ? 'closed-row-input' : ''}`}>
-                              {pay.amount || pay.date ? (
-                                <>
-                                  <span className="text-[10px] text-amber-900/80 font-bold font-sans tracking-tight">
-                                    {pay.date || '—'}
-                                  </span>
-                                  <span className="text-[12px] font-bold text-[#166534] font-sans">
-                                    {pay.amount ? `₹${pay.amount}` : '—'}
-                                  </span>
-                                </>
-                              ) : (
-                                <span className="text-slate-300 font-sans text-xs">—</span>
-                              )}
-                            </div>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-
-                {/* Bottom Add Person Button Row */}
-                {isEditing && (
-                  <tr className="no-print h-[38px] bg-[#b45309]/5">
-                    <td colSpan={6 + leftPageCount} className="ledger-cell-border border-r-0 p-1.5 text-center">
-                      <button
-                        onClick={handleAddRow}
-                        className="px-4 py-1.5 text-xs bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 border border-teal-800 text-white rounded-lg font-bold transition-all shadow-md hover:scale-[1.02] active:scale-[0.98] leading-none"
-                      >
-                        ➕ Add Person Row
-                      </button>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* ========================================================
-              RIGHT PAGE SPREAD (Continuation of Installment Columns, Totals)
-             ======================================================== */}
-          <div
-            className="right-page-curl paper-grain pt-4 pb-6 pl-0 pr-4 relative z-10 flex flex-col items-start overflow-x-auto scrollbar-book"
-            style={{ width: `${rightPageWidth}px` }}
-          >
-
-            <table className="ledger-table w-full table-fixed border-collapse select-text">
-              <thead className="bg-[#b45309]/5">
-                {/* Headers Row */}
-                <tr className="double-header-border text-slate-900 font-bold text-center h-[54px] select-none text-[11px] leading-tight">
-                  {/* Right side dynamic installment columns */}
-                  {Array.from({ length: rightPageCount }).map((_, i) => {
-                    const dIdx = i + leftPageCount;
-                    return (
-                      <th key={dIdx} className={`ledger-cell-border w-[88px] p-0 align-middle ${i === 0 ? 'border-l-0' : ''}`}>
+                    <th className="ledger-cell-border w-[70px] select-none font-bold align-middle">
+                      తేది<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Borrow Date</span>
+                    </th>
+                    {/* Separate Telugu Name Column */}
+                    <th className="ledger-cell-border w-[130px] select-none font-bold align-middle">
+                      ఆసామి పేరు (తెలుగు)<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Telugu Name</span>
+                    </th>
+                    {/* Separate English Name Column */}
+                    <th className="ledger-cell-border w-[130px] select-none font-bold align-middle">
+                      పేరు (English)<br /><span className="text-[9px] text-slate-500 font-sans font-bold">English Name</span>
+                    </th>
+                    <th className="ledger-cell-border w-[90px] select-none font-bold align-middle">
+                      వస్తువు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Product</span>
+                    </th>
+                    <th className="ledger-cell-border w-[75px] select-none font-bold align-middle">
+                      సొమ్ము<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Amount</span>
+                    </th>
+                    {/* Left side dynamic installment columns */}
+                    {Array.from({ length: leftPageCount }).map((_, dIdx) => (
+                      <th key={dIdx} className={`ledger-cell-border w-[88px] p-0 align-middle ${dIdx === leftPageCount - 1 ? 'border-r-0' : ''}`}>
                         <div className="relative flex flex-col items-center justify-center h-full px-1 py-1 select-none">
                           <span className="text-[10px] text-amber-950 font-bold leading-tight">
                             వాయిదా {dIdx + 1}
                           </span>
+
                           <span className="text-[8.5px] text-amber-800/80 font-sans font-bold tracking-tight">
                             తేది | సొమ్ము
                           </span>
@@ -1398,33 +1613,131 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
                           )}
                         </div>
                       </th>
-                    );
-                  })}
-
-                  {/* Summary columns */}
-                  <th className="ledger-cell-border w-[100px] select-none font-bold align-middle">
-                    మొత్తం వసూలు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Total Paid</span>
-                  </th>
-                  <th className="ledger-cell-border w-[100px] select-none font-bold align-middle">
-                    బాకీ సొమ్ము<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Remaining</span>
-                  </th>
-                  <th className="ledger-cell-border w-[80px] select-none font-bold align-middle">
-                    ముగింపు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Status</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRows.map((row, rIdx) => {
-                  const { totalPaid, target, amount } = getRowTotals(row);
-                  return (
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={6 + leftPageCount} className="ledger-cell-border p-8 text-center text-amber-900/60 font-medium text-xs">
+                        {searchTerm ? `"${searchTerm}" కి సంబంధించి ఎటువంటి రికార్డులు కనుగొనబడలేదు` : 'ఈ ఖాతా పుస్తకంలో రికార్డులు ఏవీ లేవు'}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredRows.map((row, rIdx) => (
                     <tr key={row.id} className={`h-[48px] hover:bg-slate-500/5 transition-colors ${row.isClosed ? 'bg-slate-100/55 opacity-90' : ''}`}>
+                      {/* SNo cell */}
+                      <td className="ledger-cell-border p-0 text-center font-sans">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={row.sNo}
+                          data-row={rIdx}
+                          data-col={1}
+                          onChange={(e) => handleCellChange(row.id, 'sNo', e.target.value)}
+                          onKeyDown={(e) => handleKeyDown(e, rIdx, 1)}
+                          onFocus={() => setActiveCell({ row: rIdx, col: 1 })}
+                          className={`ledger-cell-input text-center font-bold text-slate-800 ${row.isClosed ? 'closed-row-input' : ''}`}
+                        />
+                      </td>
 
-                      {/* Date + Amount Installment cells index leftPageCount to end */}
-                      {Array.from({ length: rightPageCount }).map((_, i) => {
-                        const dIdx = i + leftPageCount;
+                      {/* Borrow Date cell */}
+                      <td className="ledger-cell-border p-0 text-center font-sans">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={row.date}
+                          data-row={rIdx}
+                          data-col={0}
+                          onChange={(e) => handleCellChange(row.id, 'date', e.target.value)}
+                          onKeyDown={(e) => handleKeyDown(e, rIdx, 0)}
+                          onFocus={() => setActiveCell({ row: rIdx, col: 0 })}
+                          className={`ledger-cell-input text-center ${row.isClosed ? 'closed-row-input' : ''}`}
+                          placeholder="DD-MM"
+                        />
+                      </td>
+
+                      {/* Separate Telugu Name cell */}
+                      <td className="ledger-cell-border p-0 text-left telugu-font">
+                        <div className="flex items-center w-full h-full relative">
+                          {isEditing && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRow(row.id)}
+                              className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded no-print ml-1 flex-shrink-0"
+                              title="Delete Person"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <input
+                            type="text"
+                            disabled={!isEditing}
+                            value={row.nameTelugu || ''}
+                            data-row={rIdx}
+                            data-col={2}
+                            onChange={(e) => handleNameChange(row.id, 'telugu', e.target.value)}
+                            onKeyDown={(e) => handleKeyDown(e, rIdx, 2)}
+                            onFocus={() => setActiveCell({ row: rIdx, col: 2 })}
+                            className={`ledger-cell-input text-left px-2 font-semibold ${row.isClosed ? 'closed-row-input' : ''}`}
+                            placeholder="తెలుగు పేరు"
+                          />
+                        </div>
+                      </td>
+
+                      {/* Separate English Name cell */}
+                      <td className="ledger-cell-border p-0 text-left font-sans">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={row.nameEnglish || ''}
+                          data-row={rIdx}
+                          data-col={3}
+                          onChange={(e) => handleNameChange(row.id, 'english', e.target.value)}
+                          onKeyDown={(e) => handleKeyDown(e, rIdx, 3)}
+                          onFocus={() => setActiveCell({ row: rIdx, col: 3 })}
+                          className={`ledger-cell-input text-left px-2 text-xs font-semibold text-slate-700 ${row.isClosed ? 'closed-row-input' : ''}`}
+                          placeholder="English Name"
+                        />
+                      </td>
+
+                      {/* Item Details cell */}
+                      <td className="ledger-cell-border p-0 text-left">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={row.item}
+                          data-row={rIdx}
+                          data-col={4}
+                          onChange={(e) => handleCellChange(row.id, 'item', e.target.value)}
+                          onKeyDown={(e) => handleKeyDown(e, rIdx, 4)}
+                          onFocus={() => setActiveCell({ row: rIdx, col: 4 })}
+                          className={`ledger-cell-input text-left px-2 text-xs text-slate-600 ${row.isClosed ? 'closed-row-input' : ''}`}
+                          placeholder=""
+                        />
+                      </td>
+
+                      {/* Amount cell */}
+                      <td className="ledger-cell-border p-0 text-right font-sans">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={row.amount}
+                          data-row={rIdx}
+                          data-col={5}
+                          onChange={(e) => handleCellChange(row.id, 'amount', e.target.value)}
+                          onKeyDown={(e) => handleKeyDown(e, rIdx, 5)}
+                          onFocus={() => setActiveCell({ row: rIdx, col: 5 })}
+                          className={`ledger-cell-input text-right px-1.5 font-bold text-[#166534] ${row.isClosed ? 'closed-row-input' : ''}`}
+                          placeholder=""
+                        />
+                      </td>
+
+                      {/* Date + Amount Installment cells index 0 to leftPageCount - 1 */}
+                      {Array.from({ length: leftPageCount }).map((_, dIdx) => {
                         const pay = getPayment(row, dIdx);
                         return (
-                          <td key={dIdx} className={`ledger-cell-border p-0 text-center font-sans bg-amber-50/10 ${i === 0 ? 'border-l-0' : ''}`}>
+                          <td key={dIdx} className={`ledger-cell-border p-0 text-center font-sans bg-amber-50/10 ${dIdx === leftPageCount - 1 ? 'border-r-0' : ''}`}>
                             {isEditing ? (
                               <div className="flex flex-col h-full w-full justify-center">
                                 {/* Top Date Input */}
@@ -1465,115 +1778,247 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
                           </td>
                         );
                       })}
+                    </tr>
+                  )))}
 
-                      {/* Total Paid Column */}
-                      <td className={`ledger-cell-border p-1 text-center font-sans font-extrabold text-[#059669] bg-emerald-50/20 ${row.isClosed ? 'line-through text-slate-400 opacity-60' : ''}`}>
-                        {row.amount ? totalPaid || '0' : ''}
+                  {/* Bottom Add Person Button Row */}
+                  {isEditing && (
+                    <tr className="no-print h-[38px] bg-[#b45309]/5">
+                      <td colSpan={6 + leftPageCount} className="ledger-cell-border border-r-0 p-1.5 text-center">
+                        <button
+                          onClick={handleAddRow}
+                          className="px-4 py-1.5 text-xs bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 border border-teal-800 text-white rounded-lg font-bold transition-all shadow-md hover:scale-[1.02] active:scale-[0.98] leading-none"
+                        >
+                          ➕ Add Person Row
+                        </button>
                       </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
 
-                      {/* Remaining Balance Column */}
-                      <td className={`ledger-cell-border p-0 text-center font-sans transition-colors ${(target - totalPaid) <= 0 && totalPaid > 0
-                        ? 'bg-emerald-100/40 text-emerald-800 font-extrabold'
-                        : 'bg-amber-50/10'
-                        }`}>
-                        <div className="relative flex items-center justify-center h-full w-full">
-                          <input
-                            type="text"
-                            disabled={!isEditing}
-                            value={
-                              activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length
-                                ? (row.initialRemaining !== undefined ? row.initialRemaining : (row.amount ? row.amount : ''))
-                                : (row.amount ? (target - totalPaid).toString() : '')
-                            }
-                            data-row={rIdx}
-                            data-col={6 + currentDateColumns.length}
-                            onChange={(e) => handleCellChange(row.id, 'initialRemaining', e.target.value)}
-                            onKeyDown={(e) => handleKeyDown(e, rIdx, 6 + currentDateColumns.length)}
-                            onFocus={() => setActiveCell({ row: rIdx, col: 6 + currentDateColumns.length })}
-                            onBlur={() => {
-                              // Small timeout so click on "+5%" badge registers before activeCell resets to null
-                              setTimeout(() => setActiveCell(null), 150);
-                            }}
-                            className={`ledger-cell-input text-center text-xs font-extrabold ${(activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length) ? 'pr-8' : ''
-                              } ${(target - totalPaid) <= 0 && totalPaid > 0
-                                ? 'text-emerald-700 font-extrabold'
-                                : 'text-amber-900'
-                              } ${row.isClosed ? 'closed-row-input' : ''}`}
-                            placeholder={row.amount ? (amount - totalPaid).toString() : ''}
-                          />
-                          {isEditing && activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length && (
+            {/* ========================================================
+              RIGHT PAGE SPREAD (Continuation of Installment Columns, Totals)
+             ======================================================== */}
+            <div
+              className="right-page-curl paper-grain pt-4 pb-6 pl-0 pr-4 relative z-10 flex flex-col items-start overflow-x-auto scrollbar-book"
+              style={{ width: `${rightPageWidth}px` }}
+            >
+
+              <table className="ledger-table w-full table-fixed border-collapse select-text">
+                <thead className="bg-[#b45309]/5">
+                  {/* Headers Row */}
+                  <tr className="double-header-border text-slate-900 font-bold text-center h-[54px] select-none text-[11px] leading-tight">
+                    {/* Right side dynamic installment columns */}
+                    {Array.from({ length: rightPageCount }).map((_, i) => {
+                      const dIdx = i + leftPageCount;
+                      return (
+                        <th key={dIdx} className={`ledger-cell-border w-[88px] p-0 align-middle ${i === 0 ? 'border-l-0' : ''}`}>
+                          <div className="relative flex flex-col items-center justify-center h-full px-1 py-1 select-none">
+                            <span className="text-[10px] text-amber-950 font-bold leading-tight">
+                              వాయిదా {dIdx + 1}
+                            </span>
+                            <span className="text-[8.5px] text-amber-800/80 font-sans font-bold tracking-tight">
+                              తేది | సొమ్ము
+                            </span>
+                            {isEditing && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteColumn(dIdx)}
+                                className="absolute -top-1.5 right-0.5 text-[10px] text-red-500 hover:text-red-700 bg-white/95 rounded-full w-4 h-4 flex items-center justify-center shadow border border-red-200 no-print"
+                                title="Delete Column"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+                        </th>
+                      );
+                    })}
+
+                    {/* Summary columns */}
+                    <th className="ledger-cell-border w-[100px] select-none font-bold align-middle">
+                      మొత్తం వసూలు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Total Paid</span>
+                    </th>
+                    <th className="ledger-cell-border w-[100px] select-none font-bold align-middle">
+                      బాకీ సొమ్ము<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Remaining</span>
+                    </th>
+                    <th className="ledger-cell-border w-[80px] select-none font-bold align-middle">
+                      ముగింపు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Status</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={rightPageCount + 3} className="ledger-cell-border p-8 text-center text-amber-900/60 font-medium text-xs">
+                        —
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredRows.map((row, rIdx) => {
+                    const { totalPaid, target, amount } = getRowTotals(row);
+                    return (
+                      <tr key={row.id} className={`h-[48px] hover:bg-slate-500/5 transition-colors ${row.isClosed ? 'bg-slate-100/55 opacity-90' : ''}`}>
+
+                        {/* Date + Amount Installment cells index leftPageCount to end */}
+                        {Array.from({ length: rightPageCount }).map((_, i) => {
+                          const dIdx = i + leftPageCount;
+                          const pay = getPayment(row, dIdx);
+                          return (
+                            <td key={dIdx} className={`ledger-cell-border p-0 text-center font-sans bg-amber-50/10 ${i === 0 ? 'border-l-0' : ''}`}>
+                              {isEditing ? (
+                                <div className="flex flex-col h-full w-full justify-center">
+                                  {/* Top Date Input */}
+                                  <input
+                                    type="text"
+                                    value={pay.date}
+                                    placeholder="DD-MM"
+                                    onChange={(e) => handlePaymentChange(row.id, dIdx, 'date', e.target.value)}
+                                    className="w-full text-center text-[10px] font-semibold text-amber-900 bg-amber-50/40 border-b border-amber-200/60 focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
+                                    title="Payment Date (DD-MM)"
+                                  />
+                                  {/* Bottom Amount Input */}
+                                  <input
+                                    type="text"
+                                    value={pay.amount}
+                                    placeholder="₹ సొమ్ము"
+                                    onChange={(e) => handlePaymentChange(row.id, dIdx, 'amount', e.target.value)}
+                                    className="w-full text-center text-[11px] font-bold text-slate-800 bg-transparent focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
+                                    title="Payment Amount"
+                                  />
+                                </div>
+                              ) : (
+                                <div className={`flex flex-col items-center justify-center h-full py-0.5 leading-tight select-text ${row.isClosed ? 'closed-row-input' : ''}`}>
+                                  {pay.amount || pay.date ? (
+                                    <>
+                                      <span className="text-[10px] text-amber-900/80 font-bold font-sans tracking-tight">
+                                        {pay.date || '—'}
+                                      </span>
+                                      <span className="text-[12px] font-bold text-[#166534] font-sans">
+                                        {pay.amount ? `₹${pay.amount}` : '—'}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <span className="text-slate-300 font-sans text-xs">—</span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+
+                        {/* Total Paid Column */}
+                        <td className={`ledger-cell-border p-1 text-center font-sans font-extrabold text-[#059669] bg-emerald-50/20 ${row.isClosed ? 'line-through text-slate-400 opacity-60' : ''}`}>
+                          {row.amount ? totalPaid || '0' : ''}
+                        </td>
+
+                        {/* Remaining Balance Column */}
+                        <td className={`ledger-cell-border p-0 text-center font-sans transition-colors ${(target - totalPaid) <= 0 && totalPaid > 0
+                          ? 'bg-emerald-100/40 text-emerald-800 font-extrabold'
+                          : 'bg-amber-50/10'
+                          }`}>
+                          <div className="relative flex items-center justify-center h-full w-full">
+                            <input
+                              type="text"
+                              disabled={!isEditing}
+                              value={
+                                activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length
+                                  ? (row.initialRemaining !== undefined ? row.initialRemaining : (row.amount ? row.amount : ''))
+                                  : (row.amount ? (target - totalPaid).toString() : '')
+                              }
+                              data-row={rIdx}
+                              data-col={6 + currentDateColumns.length}
+                              onChange={(e) => handleCellChange(row.id, 'initialRemaining', e.target.value)}
+                              onKeyDown={(e) => handleKeyDown(e, rIdx, 6 + currentDateColumns.length)}
+                              onFocus={() => setActiveCell({ row: rIdx, col: 6 + currentDateColumns.length })}
+                              onBlur={() => {
+                                // Small timeout so click on "+5%" badge registers before activeCell resets to null
+                                setTimeout(() => setActiveCell(null), 150);
+                              }}
+                              className={`ledger-cell-input text-center text-xs font-extrabold ${(activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length) ? 'pr-8' : ''
+                                } ${(target - totalPaid) <= 0 && totalPaid > 0
+                                  ? 'text-emerald-700 font-extrabold'
+                                  : 'text-amber-900'
+                                } ${row.isClosed ? 'closed-row-input' : ''}`}
+                              placeholder={row.amount ? (amount - totalPaid).toString() : ''}
+                            />
+                            {isEditing && activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  const currentVal = parseFloat(row.initialRemaining || row.amount || '0') || 0;
+                                  const newVal = Math.round(currentVal * 1.05);
+                                  handleCellChange(row.id, 'initialRemaining', newVal.toString());
+                                }}
+                                className="absolute right-1 px-1 py-0.5 text-[9px] bg-amber-600 text-white rounded hover:bg-amber-700 font-sans font-bold no-print"
+                                title="Add 5% Interest"
+                              >
+                                +5%
+                              </button>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Status Column (Closed Action) */}
+                        <td className="ledger-cell-border p-1 text-center font-sans">
+                          {isEditing ? (
                             <button
                               type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                e.preventDefault();
-                                const currentVal = parseFloat(row.initialRemaining || row.amount || '0') || 0;
-                                const newVal = Math.round(currentVal * 1.05);
-                                handleCellChange(row.id, 'initialRemaining', newVal.toString());
-                              }}
-                              className="absolute right-1 px-1 py-0.5 text-[9px] bg-amber-600 text-white rounded hover:bg-amber-700 font-sans font-bold no-print"
-                              title="Add 5% Interest"
-                            >
-                              +5%
-                            </button>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Status Column (Closed Action) */}
-                      <td className="ledger-cell-border p-1 text-center font-sans">
-                        {isEditing ? (
-                          <button
-                            type="button"
-                            onClick={() => handleToggleClosed(row.id)}
-                            className={`px-2 py-0.5 text-[10px] font-bold rounded shadow transition-all ${row.isClosed
+                              onClick={() => handleToggleClosed(row.id)}
+                              className={`px-2 py-0.5 text-[10px] font-bold rounded shadow transition-all ${row.isClosed
                                 ? 'bg-red-100 text-red-700 border border-red-200 hover:bg-red-200'
                                 : 'bg-emerald-100 text-emerald-700 border border-emerald-200 hover:bg-emerald-200'
-                              }`}
-                          >
-                            {row.isClosed ? 'Reopen' : 'Close'}
-                          </button>
-                        ) : (
-                          <span
-                            className={`inline-block py-0.5 px-2 rounded-full text-[9px] font-extrabold uppercase tracking-wider ${row.isClosed
+                                }`}
+                            >
+                              {row.isClosed ? 'Reopen' : 'Close'}
+                            </button>
+                          ) : (
+                            <span
+                              className={`inline-block py-0.5 px-2 rounded-full text-[9px] font-extrabold uppercase tracking-wider ${row.isClosed
                                 ? 'bg-red-100 text-red-800 border border-red-200'
                                 : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                              }`}
-                          >
-                            {row.isClosed ? 'Closed' : 'Active'}
-                          </span>
-                        )}
-                      </td>
+                                }`}
+                            >
+                              {row.isClosed ? 'Closed' : 'Active'}
+                            </span>
+                          )}
+                        </td>
 
-                    </tr>
-                  );
-                })}
-
-                {/* Bottom Add Column Button Row */}
-                {isEditing && (
-                  <tr className="no-print h-[38px] bg-[#b45309]/5">
-                    <td colSpan={rightPageCount + 3} className="ledger-cell-border border-l-0 p-1.5 text-center">
-                      <button
-                        onClick={handleAddColumn}
-                        className="px-4 py-1.5 text-xs bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 border border-amber-800 text-white rounded-lg font-bold transition-all shadow-md hover:scale-[1.02] active:scale-[0.98] leading-none"
-                      >
-                        ➕ Add Date Column
-                      </button>
-                    </td>
-                  </tr>
+                      </tr>
+                    );
+                  })
                 )}
-              </tbody>
-            </table>
+
+                  {/* Bottom Add Column Button Row */}
+                  {isEditing && (
+                    <tr className="no-print h-[38px] bg-[#b45309]/5">
+                      <td colSpan={rightPageCount + 3} className="ledger-cell-border border-l-0 p-1.5 text-center">
+                        <button
+                          onClick={handleAddColumn}
+                          className="px-4 py-1.5 text-xs bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 border border-amber-800 text-white rounded-lg font-bold transition-all shadow-md hover:scale-[1.02] active:scale-[0.98] leading-none"
+                        >
+                          ➕ Add Date Column
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+
           </div>
-
-
+          )}
         </div>
-      </div>
       </div>
 
       {/* 3. Dedicated High-Definition Print Ledger Layout (Guaranteed 100% Page Fit) */}
       <div className="print-only-ledger hidden print:block p-2 bg-white text-black font-sans">
-        
+
         {/* Print Header */}
         <div className="border-b-2 border-slate-900 pb-2 mb-3">
           <div className="flex items-center justify-between">

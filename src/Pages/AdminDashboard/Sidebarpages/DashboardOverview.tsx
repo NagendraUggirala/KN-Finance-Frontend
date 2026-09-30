@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
-import { 
-  Users, 
-  Settings, 
-  Eye, 
-  EyeOff, 
-  ArrowUpRight, 
-  Activity,
+import {
+  Users,
+  Settings,
+  Eye,
+  EyeOff,
+  ArrowUpRight,
   MapPin,
   ShieldCheck
 } from 'lucide-react';
@@ -62,32 +61,16 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
   return (
     <div className="space-y-6">
-      
-      {/* Top Welcome Panel */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-gradient-to-r from-[#166534] to-[#1e3a1e] p-6 rounded-2xl text-white shadow-md relative overflow-hidden">
-        <div className="absolute right-0 bottom-0 top-0 opacity-10 flex items-center pointer-events-none">
-          <Activity className="w-64 h-64 text-white -mr-16 -mb-16" />
-        </div>
-        <div className="z-10">
-          <h2 className="text-xl md:text-2xl font-extrabold font-display">Welcome Back, Operational Admin</h2>
-          <p className="text-xs text-green-200 mt-1">
-            KN Finance Branch operations dashboard. Real-time metrics and personnel tracking are fully active.
-          </p>
-        </div>
-        <div className="z-10 flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/10 backdrop-blur-xs border border-white/20 text-xs font-bold">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#D4A017] animate-pulse" />
-          <span>System Synced</span>
-        </div>
-      </div>
+
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        
+
         {/* KPI 1: Total Revenue */}
         <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
           <div className="flex items-center justify-between text-xs text-[#64748B] font-bold">
             <span>Total Revenue</span>
-            <button 
+            <button
               onClick={() => {
                 setHideRevenue(!hideRevenue);
                 onShowToast(hideRevenue ? "Revealed Total Revenue." : "Masked Total Revenue.");
@@ -113,7 +96,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
           <div className="flex items-center justify-between text-xs text-[#64748B] font-bold">
             <span>Total Members / Employees</span>
-            <button 
+            <button
               onClick={() => {
                 setHideEmployees(!hideEmployees);
                 onShowToast(hideEmployees ? "Revealed Total Members." : "Masked Total Members.");
@@ -139,7 +122,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
           <div className="flex items-center justify-between text-xs text-[#64748B] font-bold">
             <span>Today's Generated Amount</span>
-            <button 
+            <button
               onClick={() => {
                 setHideTodayAmount(!hideTodayAmount);
                 onShowToast(hideTodayAmount ? "Revealed Today's Generated Amount." : "Masked Today's Generated Amount.");
@@ -165,7 +148,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
           <div className="flex items-center justify-between text-xs text-[#64748B] font-bold">
             <span>Monthly Maintenance</span>
-            <button 
+            <button
               onClick={() => {
                 setHideMaintenance(!hideMaintenance);
                 onShowToast(hideMaintenance ? "Revealed Monthly Maintenance." : "Masked Monthly Maintenance.");
@@ -191,7 +174,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
       {/* Middle Grid: Telemetry, Active/Inactive Ratio and Assigned Area Map */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
+
         {/* Personnel Telemetry Ratio Card */}
         <div className="lg:col-span-5 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between gap-4">
           <div>
@@ -206,9 +189,9 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 <span className="text-[#166534]">{totalEmployeesCount ? Math.round((activeCount / totalEmployeesCount) * 100) : 0}%</span>
               </div>
               <div className="w-full h-2.5 rounded-full bg-slate-200 overflow-hidden">
-                <div 
-                  className="h-full bg-[#166534] rounded-full transition-all duration-500" 
-                  style={{ width: `${totalEmployeesCount ? (activeCount / totalEmployeesCount) * 100 : 0}%` }} 
+                <div
+                  className="h-full bg-[#166534] rounded-full transition-all duration-500"
+                  style={{ width: `${totalEmployeesCount ? (activeCount / totalEmployeesCount) * 100 : 0}%` }}
                 />
               </div>
               <p className="text-[10px] text-[#64748B]">{activeCount} employees online / assigned to fields</p>
@@ -220,9 +203,9 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 <span className="text-amber-700">{totalEmployeesCount ? Math.round((inactiveCount / totalEmployeesCount) * 100) : 0}%</span>
               </div>
               <div className="w-full h-2.5 rounded-full bg-slate-200 overflow-hidden">
-                <div 
-                  className="h-full bg-amber-500 rounded-full transition-all duration-500" 
-                  style={{ width: `${totalEmployeesCount ? (inactiveCount / totalEmployeesCount) * 100 : 0}%` }} 
+                <div
+                  className="h-full bg-amber-500 rounded-full transition-all duration-500"
+                  style={{ width: `${totalEmployeesCount ? (inactiveCount / totalEmployeesCount) * 100 : 0}%` }}
                 />
               </div>
               <p className="text-[10px] text-[#64748B]">{inactiveCount} employees on leave or pending activation</p>

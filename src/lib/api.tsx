@@ -306,14 +306,38 @@ export async function superAdminLoginApi(credentials: SuperAdminLoginPayload): P
 }
 
 /**
+ * Resilient multi-gateway fetch helper:
+ * Tries the primary configured API base URL, and seamlessly falls back
+ * to local development (http://localhost:5000) or render gateway if network connection drops.
+ */
+async function fetchWithBaseFallback(endpoint: string, options: RequestInit): Promise<Response> {
+  const configuredBase = (API_BASE_URL || '').replace(/\/+$/, '');
+  const candidateBases = [
+    configuredBase,
+    'http://localhost:5000',
+    'https://kn-finance-backend.onrender.com'
+  ].filter((b, idx, self) => Boolean(b) && self.indexOf(b) === idx);
+
+  let lastError: any = null;
+  for (const base of candidateBases) {
+    try {
+      const fullUrl = `${base}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+      const res = await fetch(fullUrl, options);
+      return res;
+    } catch (err: any) {
+      lastError = err;
+      continue;
+    }
+  }
+  throw lastError || new Error('Network connection failed across all API endpoints.');
+}
+
+/**
  * Admin Login API caller
  * Calls backend endpoint POST /api/auth/login
  */
 export async function adminLoginApi(credentials: AdminLoginPayload): Promise<AdminLoginResponse> {
-  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
-  const url = `${baseUrl}/api/auth/login`;
-
-  const response = await fetch(url, {
+  const response = await fetchWithBaseFallback('/api/auth/login', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -579,3 +603,923 @@ export async function updateAdminStatusApi(adminId: string, status: 'active' | '
 
   return data;
 }
+
+/* ==========================================================================
+   ======================= AUTH & SESSION HELPERS ===========================
+   ========================================================================== */
+
+/**
+ * Retrieve active authorization token (Admin, Super Admin, or generic token)
+ */
+export function getAdminOrSuperAdminToken(): string | null {
+  return (
+    localStorage.getItem('kn_admin_token') ||
+    localStorage.getItem('kn_superadmin_token') ||
+    localStorage.getItem('token') ||
+    null
+  );
+}
+
+/**
+ * Retrieve authorization token for field employees
+ */
+export function getEmployeeToken(): string | null {
+  return localStorage.getItem('kn_employee_token') || null;
+}
+
+/**
+ * Persist employee session on login
+ */
+export function setEmployeeSession(token: string, employeeObj?: any): void {
+  if (token) {
+    localStorage.setItem('kn_employee_token', token);
+  }
+  if (employeeObj) {
+    localStorage.setItem('kn_employee_user', JSON.stringify(employeeObj));
+  }
+}
+
+/**
+ * Clear employee portal session
+ */
+export function employeeLogout(): void {
+  localStorage.removeItem('kn_employee_token');
+  localStorage.removeItem('kn_employee_user');
+}
+
+/**
+ * Retrieve current employee session data
+ */
+export function getEmployeeSession(): { token: string | null; employee: any | null } {
+  const token = getEmployeeToken();
+  const userStr = localStorage.getItem('kn_employee_user');
+  let employee = null;
+  if (userStr) {
+    try {
+      employee = JSON.parse(userStr);
+    } catch {}
+  }
+  return { token, employee };
+}
+
+/**
+ * Check if employee is logged in
+ */
+export function isEmployeeAuthenticated(): boolean {
+  return !!getEmployeeToken();
+}
+
+/**
+ * Headers for Admin / Super Admin requests
+ */
+export function getAdminAuthHeaders(): Record<string, string> {
+  const token = getAdminOrSuperAdminToken() || getEmployeeToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+/**
+ * Headers for Employee Portal requests
+ */
+export function getEmployeeAuthHeaders(): Record<string, string> {
+  const token = getEmployeeToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+/* ==========================================================================
+   ======================= 1. FINANCE BOOK LEDGER ===========================
+   ========================================================================== */
+
+export interface LedgerInstallmentPaymentItem {
+  date: string;
+  amount: number | string;
+  paymentType?: 'Cash' | 'UPI' | 'Card';
+}
+
+export interface LedgerBorrowerRowResponse {
+  id: string;
+  sNo: number;
+  date?: string;
+  borrowDate?: string;
+  nameTelugu: string;
+  nameEnglish?: string;
+  item?: string;
+  productItem?: string;
+  amount?: number;
+  principalAmount?: number;
+  initialRemaining?: number;
+  interestRate?: number;
+  isClosed?: boolean;
+  totalPaid?: number;
+  remainingBalance?: number;
+  payments?: Record<string, LedgerInstallmentPaymentItem>;
+}
+
+export interface FinanceBookActiveData {
+  ledgerBook?: {
+    id: string;
+    branchId?: string;
+    title?: string;
+    academicYear?: string;
+    isActive?: boolean;
+    version?: number;
+  };
+  dateColumns: string[];
+  columns?: Array<{
+    id?: string;
+    columnIndex: number;
+    headerDate: string;
+    labelTelugu?: string;
+  }>;
+  rows: LedgerBorrowerRowResponse[];
+  totals?: {
+    principalAmount?: number;
+    totalPaid?: number;
+    remainingBalance?: number;
+  };
+}
+
+export interface FinanceBookActiveResponse {
+  success: boolean;
+  message?: string;
+  data: FinanceBookActiveData;
+}
+
+export interface BatchSaveRequest {
+  ledgerBookId?: string;
+  version?: number;
+  dateColumns: string[];
+  rows: Array<{
+    id?: string;
+    sNo?: number;
+    date?: string;
+    nameTelugu: string;
+    nameEnglish?: string;
+    item?: string;
+    amount?: number;
+    initialRemaining?: number;
+    interestRate?: number;
+    isClosed?: boolean;
+    payments?: Record<string, { date: string; amount: number; paymentType?: string }>;
+  }>;
+}
+
+export interface CreateBorrowerRowPayload {
+  ledgerBookId?: string;
+  borrowDate?: string;
+  nameTelugu: string;
+  nameEnglish?: string;
+  productItem: string;
+  principalAmount: number;
+  interestRate?: number;
+}
+
+export interface UpdateBorrowerRowPayload {
+  borrowDate?: string;
+  nameTelugu?: string;
+  nameEnglish?: string;
+  productItem?: string;
+  principalAmount?: number;
+  initialRemaining?: number;
+  interestRate?: number;
+  applyFivePercentIncrement?: boolean;
+}
+
+/**
+ * GET /api/v1/finance-book/active
+ * Retrieve active Finance Book ledger with dates, rows, columns, and totals.
+ */
+export async function getActiveFinanceBookApi(): Promise<FinanceBookActiveResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/finance-book/active`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: getAdminAuthHeaders(),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to fetch active Finance Book (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * POST /api/v1/finance-book/batch-save
+ * Save complete staged ledger state (rows, installment columns, payments) atomically.
+ */
+export async function batchSaveFinanceBookApi(payload: BatchSaveRequest): Promise<{ success: boolean; message: string; data?: any }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/finance-book/batch-save`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getAdminAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to batch save Finance Book (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * POST /api/v1/finance-book/columns
+ * Add next installment column
+ */
+export async function addFinanceBookColumnApi(ledgerBookId?: string): Promise<{ success: boolean; message: string; data?: any }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/finance-book/columns`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getAdminAuthHeaders(),
+    body: JSON.stringify(ledgerBookId ? { ledgerBookId } : {}),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to add installment column (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * DELETE /api/v1/finance-book/columns/:index
+ * Delete installment column
+ */
+export async function deleteFinanceBookColumnApi(index: number, ledgerBookId?: string): Promise<{ success: boolean; message: string; data?: any }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const query = ledgerBookId ? `?ledgerBookId=${encodeURIComponent(ledgerBookId)}` : '';
+  const url = `${baseUrl}/api/v1/finance-book/columns/${encodeURIComponent(index)}${query}`;
+
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: getAdminAuthHeaders(),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to delete column (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * POST /api/v1/finance-book/rows
+ * Create a new borrower row in the ledger
+ */
+export async function createBorrowerRowApi(payload: CreateBorrowerRowPayload): Promise<{ success: boolean; message: string; data?: any }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/finance-book/rows`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getAdminAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to create borrower row (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * PATCH /api/v1/finance-book/rows/:id
+ * Update borrower row details
+ */
+export async function updateBorrowerRowApi(rowId: string, payload: UpdateBorrowerRowPayload): Promise<{ success: boolean; message: string; data?: any }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/finance-book/rows/${encodeURIComponent(rowId)}`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: getAdminAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to update borrower row (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * DELETE /api/v1/finance-book/rows/:id
+ * Delete borrower row
+ */
+export async function deleteBorrowerRowApi(rowId: string): Promise<{ success: boolean; message: string; data?: any }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/finance-book/rows/${encodeURIComponent(rowId)}`;
+
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: getAdminAuthHeaders(),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to delete borrower row (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * PATCH /api/v1/finance-book/rows/:id/status
+ * Close or reopen borrower account
+ */
+export async function updateBorrowerStatusApi(rowId: string, isClosed: boolean): Promise<{ success: boolean; message: string; data?: any }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/finance-book/rows/${encodeURIComponent(rowId)}/status`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: getAdminAuthHeaders(),
+    body: JSON.stringify({ isClosed }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to update borrower status (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/* ==========================================================================
+   ================= 2. ADMIN - EMPLOYEE MANAGEMENT =========================
+   ========================================================================== */
+
+export interface EmployeeBackendItem {
+  _id: string;
+  employeeId: string;
+  fullName: string;
+  age: number;
+  phone: string;
+  altPhone?: string;
+  email: string;
+  aadharCard: string;
+  panCard: string;
+  village: string;
+  assignedOperationalArea: string;
+  joiningDate?: string;
+  references?: string;
+  status: 'Active' | 'Inactive';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AdminEmployeesListResponse {
+  success: boolean;
+  message?: string;
+  data: {
+    employees: EmployeeBackendItem[];
+    pagination?: {
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+    };
+  };
+}
+
+export interface AdminEmployeeDetailResponse {
+  success: boolean;
+  message?: string;
+  data: {
+    employee: EmployeeBackendItem;
+  };
+}
+
+export interface GetEmployeesParams {
+  search?: string;
+  village?: string;
+  assignedOperationalArea?: string;
+  status?: 'Active' | 'Inactive';
+  page?: number;
+  limit?: number;
+}
+
+export interface CreateEmployeePayload {
+  employeeId?: string;
+  fullName: string;
+  age: number;
+  phone: string;
+  altPhone?: string;
+  email: string;
+  aadharCard: string;
+  panCard: string;
+  village: string;
+  assignedOperationalArea: string;
+  joiningDate?: string;
+  references?: string;
+  password?: string;
+  confirmPassword?: string;
+}
+
+export interface UpdateEmployeePayload {
+  fullName?: string;
+  age?: number;
+  phone?: string;
+  altPhone?: string;
+  email?: string;
+  aadharCard?: string;
+  panCard?: string;
+  village?: string;
+  assignedOperationalArea?: string;
+  joiningDate?: string;
+  references?: string;
+}
+
+/**
+ * GET /api/v1/admin/employees
+ * List employees with search, filter, and pagination
+ */
+export async function getAdminEmployeesApi(params?: GetEmployeesParams): Promise<AdminEmployeesListResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const searchParams = new URLSearchParams();
+  if (params?.search) searchParams.set('search', params.search);
+  if (params?.village && params.village !== 'All') searchParams.set('village', params.village);
+  if (params?.assignedOperationalArea && params.assignedOperationalArea !== 'All') {
+    searchParams.set('assignedOperationalArea', params.assignedOperationalArea);
+  }
+  if (params?.status && params.status !== ('All' as any)) searchParams.set('status', params.status);
+  if (params?.page) searchParams.set('page', String(params.page));
+  if (params?.limit) searchParams.set('limit', String(params.limit));
+
+  const qs = searchParams.toString();
+  const url = `${baseUrl}/api/v1/admin/employees${qs ? `?${qs}` : ''}`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: getAdminAuthHeaders(),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to fetch employees (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * POST /api/v1/admin/employees
+ * Create a new employee with login credentials and operational area assignment
+ */
+export async function createAdminEmployeeApi(payload: CreateEmployeePayload): Promise<AdminEmployeeDetailResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/admin/employees`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getAdminAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to create employee (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * PUT /api/v1/admin/employees/:id
+ * Update employee profile
+ */
+export async function updateAdminEmployeeApi(employeeId: string, payload: UpdateEmployeePayload): Promise<AdminEmployeeDetailResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/admin/employees/${encodeURIComponent(employeeId)}`;
+
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: getAdminAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to update employee (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * DELETE /api/v1/admin/employees/:id
+ * Archive / delete employee
+ */
+export async function deleteAdminEmployeeApi(employeeId: string): Promise<{ success: boolean; message: string }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/admin/employees/${encodeURIComponent(employeeId)}`;
+
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: getAdminAuthHeaders(),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to delete employee (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * PATCH /api/v1/admin/employees/:id/status
+ * Change employee status ('Active' | 'Inactive')
+ */
+export async function updateAdminEmployeeStatusApi(employeeId: string, status: 'Active' | 'Inactive'): Promise<AdminEmployeeDetailResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/admin/employees/${encodeURIComponent(employeeId)}/status`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: getAdminAuthHeaders(),
+    body: JSON.stringify({ status }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to update employee status (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * POST /api/v1/admin/employees/:id/reset-password
+ * Admin resets employee password
+ */
+export async function resetAdminEmployeePasswordApi(employeeId: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/admin/employees/${encodeURIComponent(employeeId)}/reset-password`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getAdminAuthHeaders(),
+    body: JSON.stringify({ newPassword }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to reset employee password (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/* ==========================================================================
+   ========================= 3. EMPLOYEE PORTAL =============================
+   ========================================================================== */
+
+export interface EmployeeLoginPayload {
+  email: string;
+  password: string;
+}
+
+export interface EmployeeLoginResponse {
+  success: boolean;
+  message?: string;
+  token?: string;
+  employee?: {
+    id: string;
+    employeeId: string;
+    fullName: string;
+    email: string;
+    phone: string;
+    assignedOperationalArea: string;
+    village: string;
+    status: string;
+    [key: string]: any;
+  };
+}
+
+export interface RecordCollectionPayload {
+  borrowerId: string;
+  amount: number;
+  paymentDate?: string;
+  paymentType?: 'Cash' | 'UPI' | 'Card';
+}
+
+/**
+ * POST /api/v1/auth/employee/login
+ * Employee portal login
+ */
+export async function employeeLoginApi(payload: EmployeeLoginPayload): Promise<EmployeeLoginResponse> {
+  const response = await fetchWithBaseFallback('/api/v1/auth/employee/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Employee login failed (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  if (data?.token) {
+    setEmployeeSession(data.token, data.employee);
+  }
+
+  return data;
+}
+
+/**
+ * GET /api/v1/employee/profile
+ * Returns authenticated employee profile details
+ */
+export async function getEmployeeProfileApi(): Promise<{ success: boolean; message?: string; data: { profile: EmployeeBackendItem } }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/employee/profile`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: getEmployeeAuthHeaders(),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to fetch employee profile (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * GET /api/v1/employee/assigned-borrowers
+ * Returns active borrowers assigned to the authenticated employee operational area
+ */
+export async function getEmployeeAssignedBorrowersApi(): Promise<{ success: boolean; message?: string; data: { borrowers: any[] } }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/employee/assigned-borrowers`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: getEmployeeAuthHeaders(),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to fetch assigned borrowers (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * POST /api/v1/employee/collections
+ * Records daily/weekly field collection from assigned borrower.
+ */
+export async function recordEmployeeCollectionApi(payload: RecordCollectionPayload): Promise<{ success: boolean; message: string; data?: any }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/v1/employee/collections`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getEmployeeAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to record collection (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/* ==========================================================================
+   ======================= 5. AUDIT LOGS & ACTIVITY TRAIL ====================
+   ========================================================================== */
+
+export interface AuditLogDetails {
+  employeeId?: string;
+  changedFields?: string[];
+  before?: Record<string, any>;
+  after?: Record<string, any>;
+  reason?: string;
+  amounts?: Record<string, any>;
+  [key: string]: any;
+}
+
+export interface AuditLogItem {
+  _id: string;
+  userId: string;
+  userRole: 'superadmin' | 'admin' | 'employee' | string;
+  action: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN' | 'LOGIN_FAILED' | 'STATUS_CHANGE' | 'PASSWORD_RESET' | 'ADD_COLUMN' | 'REMOVE_COLUMN' | string;
+  entityType: 'Admin' | 'Employee' | 'FinanceRecord' | 'LedgerBorrowerRow' | 'LedgerDateColumn' | 'FinanceBook' | 'Auth' | string;
+  entityId?: string;
+  details?: AuditLogDetails;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface AuditLogsQueryParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  action?: string;
+  entityType?: string;
+  userRole?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface AuditLogsPagination {
+  page: number;
+  limit: number;
+  totalRecords: number;
+  totalPages: number;
+}
+
+export interface AuditLogsResponse {
+  success: boolean;
+  data: AuditLogItem[];
+  pagination: AuditLogsPagination;
+  message?: string;
+}
+
+export interface SingleAuditLogResponse {
+  success: boolean;
+  data: AuditLogItem;
+  message?: string;
+}
+
+/**
+ * GET /api/audit-logs (with automatic fallback to /api/v1/audit-logs)
+ * Query audit logs with pagination, multi-field filtering, and safe search.
+ * Allowed for Admin and Super Admin.
+ */
+export async function getAuditLogsApi(params?: AuditLogsQueryParams): Promise<AuditLogsResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const searchParams = new URLSearchParams();
+
+  if (params?.page) searchParams.set('page', String(params.page));
+  if (params?.limit) searchParams.set('limit', String(params.limit));
+  if (params?.search) searchParams.set('search', params.search);
+  if (params?.action && params.action !== 'ALL') searchParams.set('action', params.action);
+  if (params?.entityType && params.entityType !== 'ALL') searchParams.set('entityType', params.entityType);
+  if (params?.userRole && params.userRole !== 'ALL') searchParams.set('userRole', params.userRole);
+  if (params?.startDate) searchParams.set('startDate', params.startDate);
+  if (params?.endDate) searchParams.set('endDate', params.endDate);
+
+  const query = searchParams.toString();
+  const primaryUrl = `${baseUrl}/api/audit-logs${query ? `?${query}` : ''}`;
+
+  let response = await fetch(primaryUrl, {
+    method: 'GET',
+    headers: getAdminAuthHeaders(),
+  });
+
+  // Graceful fallback if backend routes are mounted under /api/v1/audit-logs
+  if (response.status === 404) {
+    const fallbackUrl = `${baseUrl}/api/v1/audit-logs${query ? `?${query}` : ''}`;
+    response = await fetch(fallbackUrl, {
+      method: 'GET',
+      headers: getAdminAuthHeaders(),
+    });
+  }
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to fetch audit logs (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * GET /api/audit-logs/:id
+ * Get individual audit log detail by ID.
+ */
+export async function getAuditLogByIdApi(id: string): Promise<SingleAuditLogResponse> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const primaryUrl = `${baseUrl}/api/audit-logs/${encodeURIComponent(id)}`;
+
+  let response = await fetch(primaryUrl, {
+    method: 'GET',
+    headers: getAdminAuthHeaders(),
+  });
+
+  // Graceful fallback if backend routes are mounted under /api/v1/audit-logs/:id
+  if (response.status === 404) {
+    const fallbackUrl = `${baseUrl}/api/v1/audit-logs/${encodeURIComponent(id)}`;
+    response = await fetch(fallbackUrl, {
+      method: 'GET',
+      headers: getAdminAuthHeaders(),
+    });
+  }
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to fetch audit log detail (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+/**
+ * DELETE /api/audit-logs
+ * Permanently clear all audit logs (Super Admin exclusive).
+ */
+export async function clearAuditLogsApi(): Promise<{ success: boolean; message: string; deletedCount?: number }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const primaryUrl = `${baseUrl}/api/audit-logs`;
+
+  let response = await fetch(primaryUrl, {
+    method: 'DELETE',
+    headers: getAdminAuthHeaders(),
+  });
+
+  // Graceful fallback if backend routes are mounted under /api/v1/audit-logs
+  if (response.status === 404) {
+    const fallbackUrl = `${baseUrl}/api/v1/audit-logs`;
+    response = await fetch(fallbackUrl, {
+      method: 'DELETE',
+      headers: getAdminAuthHeaders(),
+    });
+  }
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || `Failed to clear audit logs (status ${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+}
+
+

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { SuperadminNavbar } from './components/SuperadminNavbar';
 import { SuperadminSidebar, type SuperadminTab } from './components/SuperadminSidebar';
 import { AdminManagement } from './Sidebarpages/AdminManagement';
 import { UserAccountControl, type UserAccount } from './Sidebarpages/UserAccountControl';
 import { Notifications } from './Sidebarpages/Notifications';
+import { AuditLogs } from '../AdminDashboard/Sidebarpages/AuditLogs';
 
 interface SuperadminDashboardProps {
   userName: string;
@@ -17,8 +18,11 @@ export const SuperadminDashboard: React.FC<SuperadminDashboardProps> = ({
   onShowToast,
   onLogout,
 }) => {
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = (searchParams.get('tab') as SuperadminTab) || 'admins';
+  const queryTab = searchParams.get('tab') as SuperadminTab | null;
+  const isAuditPath = location.pathname.includes('/audit-logs');
+  const activeTab: SuperadminTab = queryTab || (isAuditPath ? 'audit_logs' : 'admins');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const setActiveTab = (tab: SuperadminTab) => {
@@ -60,6 +64,13 @@ export const SuperadminDashboard: React.FC<SuperadminDashboardProps> = ({
           {activeTab === 'admins' && (
             <AdminManagement onShowToast={onShowToast} />
           )}
+          {activeTab === 'audit_logs' && (
+            <AuditLogs
+              isSuperAdmin={true}
+              userName={userName}
+              onShowToast={onShowToast}
+            />
+          )}
           {activeTab === 'users' && (
             <UserAccountControl
               onShowToast={onShowToast}
@@ -79,3 +90,4 @@ export const SuperadminDashboard: React.FC<SuperadminDashboardProps> = ({
     </div>
   );
 };
+

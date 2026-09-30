@@ -27,11 +27,13 @@ export const Navbar: React.FC<NavbarProps> = ({
     { path: '/features', label: 'Features' },
     { path: '/contact', label: 'Contact Us' },
     { path: '/dashboard', label: 'Live Dashboard' },
+    { path: '/employee', label: 'Employee Portal' },
   ];
 
   const getDashboardPath = () => {
     if (userRole === 'super_admin') return '/super-admin';
     if (userRole === 'admin') return '/admin';
+    if (userRole === 'employee') return '/employee';
     return '/dashboard';
   };
 
@@ -49,6 +51,14 @@ export const Navbar: React.FC<NavbarProps> = ({
         <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-[#166534]/10 text-[#166534] border border-[#166534]/20">
           <Shield className="w-3 h-3 text-[#166534]" />
           Admin
+        </span>
+      );
+    }
+    if (userRole === 'employee') {
+      return (
+        <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300">
+          <User className="w-3 h-3 text-emerald-700" />
+          Field Officer
         </span>
       );
     }
@@ -124,7 +134,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                       ? 'Super Admin Portal'
                       : userRole === 'admin'
                         ? 'Admin Portal'
-                        : userName || 'Dashboard'}
+                        : userRole === 'employee'
+                          ? 'Employee Portal'
+                          : userName || 'Dashboard'}
                   </span>
                 </button>
                 <button

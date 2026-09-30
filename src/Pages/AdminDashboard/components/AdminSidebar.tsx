@@ -6,11 +6,13 @@ import {
   ArrowLeft,
   BookOpen,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  UserCheck,
+  ShieldCheck
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-export type AdminTab = 'overview' | 'employees' | 'finance_book';
+export type AdminTab = 'overview' | 'employees' | 'finance_book' | 'employee_portal' | 'audit_logs';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -35,7 +37,9 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   const navItems = [
     { id: 'overview' as AdminTab, label: 'Dashboard Overview', icon: LayoutDashboard },
     { id: 'employees' as AdminTab, label: 'Employee Registry', icon: Users, badge: employeeCount.toString() },
-    { id: 'finance_book' as AdminTab, label: 'Finance Book', icon: BookOpen, badge: financeCount.toString() },
+    { id: 'finance_book' as AdminTab, label: 'Finance Book ', icon: BookOpen, badge: financeCount.toString() },
+    { id: 'employee_portal' as AdminTab, label: 'Employee Portal', icon: UserCheck, badge: 'Field' },
+    { id: 'audit_logs' as AdminTab, label: 'Audit Logs', icon: ShieldCheck, badge: 'Logs' },
   ];
 
   return (
@@ -49,9 +53,8 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       )}
 
       <aside
-        className={`fixed lg:static top-0 bottom-0 left-0 z-30 lg:z-auto bg-white border-r border-slate-200 flex flex-col justify-between transition-all duration-300 transform ${
-          isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-        } ${isCollapsed ? 'w-64 lg:w-20' : 'w-64 lg:w-64'}`}
+        className={`fixed lg:static top-0 bottom-0 left-0 z-30 lg:z-auto bg-white border-r border-slate-200 flex flex-col justify-between transition-all duration-300 transform ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+          } ${isCollapsed ? 'w-64 lg:w-20' : 'w-64 lg:w-64'}`}
       >
         {/* Top Brand Banner */}
         <div className={`p-4 border-b border-slate-100 flex items-center justify-between transition-all duration-300 ${isCollapsed ? 'flex-col gap-3 px-2' : 'px-4'}`}>
@@ -97,13 +100,11 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
                   setActiveTab(item.id);
                   onCloseMobile();
                 }}
-                className={`w-full flex items-center rounded-xl text-xs font-bold transition-all duration-200 ${
-                  isCollapsed ? 'justify-center p-2.5' : 'justify-between px-3.5 py-2.5'
-                } ${
-                  isActive
+                className={`w-full flex items-center rounded-xl text-xs font-bold transition-all duration-200 ${isCollapsed ? 'justify-center p-2.5' : 'justify-between px-3.5 py-2.5'
+                  } ${isActive
                     ? 'bg-[#166534] text-white shadow-md shadow-green-950/20'
                     : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-100'
-                }`}
+                  }`}
                 title={isCollapsed ? item.label : undefined}
               >
                 <div className="flex items-center gap-3">
@@ -112,9 +113,8 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
                 </div>
 
                 {!isCollapsed && item.badge && (
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${
-                    isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
-                  }`}>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                    }`}>
                     {item.badge}
                   </span>
                 )}
@@ -144,9 +144,8 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
 
           <button
             onClick={() => navigate('/')}
-            className={`w-full flex items-center justify-center rounded-xl text-xs font-bold text-slate-600 hover:text-[#166534] hover:bg-slate-100 transition-all border border-slate-200 ${
-              isCollapsed ? 'p-2.5' : 'gap-2 px-3 py-2'
-            }`}
+            className={`w-full flex items-center justify-center rounded-xl text-xs font-bold text-slate-600 hover:text-[#166534] hover:bg-slate-100 transition-all border border-slate-200 ${isCollapsed ? 'p-2.5' : 'gap-2 px-3 py-2'
+              }`}
             title={isCollapsed ? "Return to Public Site" : undefined}
           >
             <ArrowLeft className="w-3.5 h-3.5 min-w-3.5" />

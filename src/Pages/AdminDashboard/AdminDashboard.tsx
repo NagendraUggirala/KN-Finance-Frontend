@@ -1,14 +1,17 @@
-import React, { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import { AdminNavbar } from './components/AdminNavbar';
 import { AdminSidebar, type AdminTab } from './components/AdminSidebar';
-import { Download } from 'lucide-react';
+import { Download, RefreshCw, Clock, AlertCircle, Users, Plus, WifiOff, Sparkles } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 import type { Employee, FinanceRecord } from './types';
 import { DashboardOverview } from './Sidebarpages/DashboardOverview';
 import { EmployeeDirectory } from './Sidebarpages/EmployeeDirectory';
 import { FinanceBook } from './Sidebarpages/FinanceBook';
+import { EmployeePortal } from './Sidebarpages/EmployeePortal';
+import { AuditLogs } from './Sidebarpages/AuditLogs';
+import { getAdminEmployeesApi } from '../../lib/api';
 
 interface AdminDashboardProps {
   userName: string;
@@ -22,135 +25,89 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onLogout,
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = (searchParams.get('tab') as AdminTab) || 'overview';
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const isAuditPath = location.pathname === '/admin/audit-logs';
+  const activeTab: AdminTab = isAuditPath ? 'audit_logs' : ((searchParams.get('tab') as AdminTab) || 'overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const setActiveTab = (tab: AdminTab) => {
-    setSearchParams({ tab });
+    if (tab === 'audit_logs') {
+      navigate('/admin/audit-logs');
+    } else {
+      if (isAuditPath) {
+        navigate(`/admin?tab=${tab}`);
+      } else {
+        setSearchParams({ tab });
+      }
+    }
   };
 
-  // Shared Employee State
-  const [employeesList, setEmployeesList] = useState<Employee[]>([
-    {
-      id: 'EMP-4819',
-      name: 'Rajesh Sharma',
-      age: 32,
-      phone: '9876543210',
-      altPhone: '9123456789',
-      aadharCard: '123456789012',
-      gmail: 'rajesh.sharma@knfinance.in',
-      panCard: 'ABCDE1234F',
-      village: 'Rampur',
-      assignedArea: 'Sector North',
-      referenceName: 'Vijay Kumar',
-      relationshipToReference: 'Brother',
-      joiningDate: '2025-05-12',
-      status: 'Active',
-    },
-    {
-      id: 'EMP-7721',
-      name: 'Sunita Patel',
-      age: 28,
-      phone: '9888877776',
-      altPhone: '',
-      aadharCard: '987654321098',
-      gmail: 'sunita.patel@knfinance.in',
-      panCard: 'XYZWP5678Q',
-      village: 'Gopalpur',
-      assignedArea: 'Sector West',
-      referenceName: 'Ramesh Patel',
-      relationshipToReference: 'Uncle',
-      joiningDate: '2026-02-20',
-      status: 'Active',
-    },
-    {
-      id: 'EMP-3042',
-      name: 'Anil Verma',
-      age: 41,
-      phone: '9000011112',
-      altPhone: '9000022223',
-      aadharCard: '456789012345',
-      gmail: 'anil.verma@knfinance.in',
-      panCard: 'JKLMN9012Z',
-      village: 'Bishnupur',
-      assignedArea: 'Sector East',
-      referenceName: '',
-      relationshipToReference: '',
-      joiningDate: '2024-11-05',
-      status: 'Inactive',
-    },
-    {
-      id: 'EMP-8920',
-      name: 'Pooja Reddy',
-      age: 26,
-      phone: '8765432109',
-      altPhone: '8765400000',
-      aadharCard: '234567890123',
-      gmail: 'pooja.reddy@knfinance.in',
-      panCard: 'DEFGH3456R',
-      village: 'Kalyanpur',
-      assignedArea: 'Sector South',
-      referenceName: 'Vijay Kumar',
-      relationshipToReference: 'Colleague',
-      joiningDate: '2026-07-15',
-      status: 'Active',
-    },
-    {
-      id: 'EMP-1109',
-      name: 'Vikram Singh',
-      age: 35,
-      phone: '7654321098',
-      altPhone: '',
-      aadharCard: '890123456789',
-      gmail: 'vikram.singh@knfinance.in',
-      panCard: 'PQRST7890X',
-      village: 'Rampur',
-      assignedArea: 'Sector North',
-      referenceName: 'Sanjay Singh',
-      relationshipToReference: 'Father',
-      joiningDate: '2025-09-01',
-      status: 'Inactive',
+  // Shared Employee State from Cloud Backend
+  const [employeesList, setEmployeesList] = useState<Employee[]>([]);
+  const [isLoadingEmployees, setIsLoadingEmployees] = useState<boolean>(true);
+  const [employeeLoadSeconds, setEmployeeLoadSeconds] = useState<number>(0);
+  const [employeeLoadError, setEmployeeLoadError] = useState<string | null>(null);
+  const [isEmployeeOfflineBypassed, setIsEmployeeOfflineBypassed] = useState<boolean>(false);
+
+  // Live timer for tracking cloud response latency
+  useEffect(() => {
+    let timer: any = null;
+    if (isLoadingEmployees) {
+      timer = setInterval(() => {
+        setEmployeeLoadSeconds((s) => s + 1);
+      }, 1000);
+    } else {
+      setEmployeeLoadSeconds(0);
     }
-  ]);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isLoadingEmployees]);
+
+  // Fetch staff registry from cloud backend (GET /api/v1/admin/employees)
+  const fetchDashboardEmployees = async () => {
+    setIsLoadingEmployees(true);
+    setEmployeeLoadError(null);
+    setEmployeeLoadSeconds(0);
+    try {
+      const res = await getAdminEmployeesApi();
+      if (res?.data?.employees) {
+        const mapped: Employee[] = res.data.employees.map((e: any) => ({
+          id: e._id || e.employeeId,
+          _id: e._id,
+          employeeId: e.employeeId,
+          name: e.fullName || e.name || '',
+          age: e.age || 30,
+          phone: e.phone || '',
+          altPhone: e.altPhone || e.alternativePhone || '',
+          aadharCard: e.aadharCard || e.aadharNumber || '',
+          gmail: e.email || '',
+          panCard: e.panCard || e.panNumber || '',
+          village: e.village || '',
+          assignedArea: e.assignedOperationalArea || '',
+          referenceName: e.references || e.referenceContact?.referenceName || '',
+          relationshipToReference: e.relationshipToReference || e.referenceContact?.relationship || '',
+          joiningDate: e.joiningDate ? e.joiningDate.split('T')[0] : '2026-01-01',
+          status: e.status || 'Active',
+        }));
+        setEmployeesList(mapped);
+      }
+    } catch (err: any) {
+      console.warn('Dashboard employee fetch notice:', err.message);
+      setEmployeeLoadError(err.message || 'Failed to fetch employee registry from server.');
+    } finally {
+      setIsLoadingEmployees(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboardEmployees();
+  }, []);
 
   // Shared Finance Records state
-  const [financeRecordsList, setFinanceRecordsList] = useState<FinanceRecord[]>([
-    {
-      sNo: 1,
-      id: 'FIN-5501',
-      name: 'Karan Johar',
-      referenceName: 'Vijay Kumar',
-      phone: '9876501234',
-      startDate: '2026-08-01',
-      endDate: '2026-11-01',
-      principalAmount: 5000,
-      interestRate: 26,
-      totalWithInterest: 6300,
-      paymentProcess: 'Weekly',
-      expectedDate: '2026-11-01',
-      payments: [
-        { id: 'PAY-1001', date: '2026-08-08', amount: 1500, paymentType: 'Cash', collectedBy: 'Rajesh Sharma' },
-        { id: 'PAY-1002', date: '2026-08-15', amount: 1500, paymentType: 'UPI', collectedBy: 'Sunita Patel' }
-      ]
-    },
-    {
-      sNo: 2,
-      id: 'FIN-9902',
-      name: 'Meena Kumari',
-      referenceName: 'Ramesh Patel',
-      phone: '9123405678',
-      startDate: '2026-08-10',
-      endDate: '2026-11-10',
-      principalAmount: 10000,
-      interestRate: 20,
-      totalWithInterest: 12000,
-      paymentProcess: 'Monthly',
-      expectedDate: '2026-11-10',
-      payments: [
-        { id: 'PAY-2001', date: '2026-08-12', amount: 3000, paymentType: 'Card', collectedBy: 'Pooja Reddy' }
-      ]
-    }
-  ]);
+  const [financeRecordsList, setFinanceRecordsList] = useState<FinanceRecord[]>([]);
 
   // Derived counts for sidebar badges
   const totalCount = employeesList.length;
@@ -202,6 +159,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         XLSX.writeFile(wb, `KN_Finance_Employee_Directory_${dateStamp}.xlsx`);
         onShowToast(`Exported ${employeesList.length} employee records to Excel! 📊`);
       } else if (activeTab === 'finance_book') {
+        if (financeRecordsList.length === 0) {
+          onShowToast('No finance book records currently loaded to export.');
+          return;
+        }
         const finHeaders = [
           'S.No',
           'Loan ID',
@@ -260,7 +221,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   return (
     <div className="h-screen bg-[#F8FAFC] flex flex-col font-sans overflow-hidden">
-      
+
       {/* Top Admin Navbar */}
       <AdminNavbar
         userName={userName}
@@ -271,7 +232,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       />
 
       <div className="flex-1 flex overflow-hidden">
-        
+
         {/* Sidebar Navigation */}
         <AdminSidebar
           activeTab={activeTab}
@@ -284,7 +245,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
-          
+
           {/* Header Banner (Hidden during print) */}
           <div className="no-print flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs">
             <div>
@@ -296,13 +257,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
               <h1 className="text-2xl font-extrabold text-[#0F172A] font-display">
                 {activeTab === 'overview' && 'Admin Control Overview'}
-                {activeTab === 'employees' && 'Employee Registry'}
-                {activeTab === 'finance_book' && 'Finance Ledger Book'}
+                {activeTab === 'employees' && 'Employee Registry & Lifecycle'}
+                {activeTab === 'finance_book' && 'Finance Ledger Book '}
+                {activeTab === 'employee_portal' && 'Field Officer & Borrower Route Portal'}
               </h1>
               <p className="text-xs text-[#64748B]">
                 {activeTab === 'overview' && 'Monitor branch liquidity, revenues, and general deployment telemetry.'}
-                {activeTab === 'employees' && 'View, add, edit, or delete staff records and contact cards.'}
-                {activeTab === 'finance_book' && 'Record loans, track collected payments, and audit staff collections history.'}
+                {activeTab === 'employees' && 'View, add, edit, or delete staff records, manage credentials, and assign operational areas.'}
+                {activeTab === 'finance_book' && 'Manage installment columns, borrower ledger rows, and batch-sync ledger state.'}
+                {activeTab === 'employee_portal' && 'Simulate or operate field collections, verify borrower balances, and generate instant receipts.'}
               </p>
             </div>
 
@@ -317,12 +280,156 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
 
+          {/* Staff Registry Sync Banner when records already exist */}
+          {isLoadingEmployees && employeesList.length > 0 && (
+            <div className="no-print flex items-center justify-between gap-3 p-3.5 bg-amber-50 border border-amber-300 rounded-2xl text-amber-900 text-xs shadow-xs animate-in fade-in duration-300">
+              <div className="flex items-center gap-2.5">
+                <RefreshCw className="w-4 h-4 animate-spin text-amber-700 flex-shrink-0" />
+                <div>
+                  <span className="font-bold">Syncing Staff Registry with Cloud Database...</span>
+                  {employeeLoadSeconds >= 3 && (
+                    <span className="text-amber-800 ml-1.5 font-medium">
+                      (Taking {employeeLoadSeconds}s - Server is waking up)
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {employeeLoadSeconds >= 3 && (
+                  <button
+                    onClick={fetchDashboardEmployees}
+                    className="px-2.5 py-1 text-[11px] font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition-colors flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Retry
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsLoadingEmployees(false)}
+                  className="px-2.5 py-1 text-[11px] font-bold text-amber-800 bg-white hover:bg-amber-100 rounded-lg border border-amber-300 transition-colors"
+                >
+                  Keep Local Data
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Dynamic Tab Renderers */}
           {activeTab === 'overview' && (
-            <DashboardOverview
-              employees={employeesList}
-              onShowToast={onShowToast}
-            />
+            isLoadingEmployees && employeesList.length === 0 && !isEmployeeOfflineBypassed ? (
+              <div className="max-w-2xl w-full mx-auto bg-white rounded-3xl p-6 sm:p-10 border border-slate-200 shadow-sm text-center my-6 animate-in fade-in zoom-in-95 duration-300">
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-[#166534] text-xs font-bold mb-4">
+                  <Sparkles className="w-3.5 h-3.5 text-[#166534]" />
+                  <span>శ్రీ లక్ష్మీ గణపతి ఫైనాన్స్ • KN FINANCE</span>
+                </div>
+
+                <div className="relative my-4 flex flex-col items-center">
+                  <div className="relative flex items-center justify-center w-20 h-20">
+                    <div className="absolute inset-0 rounded-full border-4 border-emerald-100 border-t-[#166534] animate-spin" />
+                    <Users className="w-8 h-8 text-[#166534]" />
+                  </div>
+
+                  <h3 className="text-xl sm:text-2xl font-extrabold text-[#0F172A] mt-5">
+                    సిబ్బంది & కార్యకలాపాల వివరాలు లోడ్ అవుతున్నాయి...
+                  </h3>
+                  <p className="text-xs sm:text-sm font-semibold text-slate-500 mt-1.5">
+                    Loading Branch Telemetry & Staff Registry from Cloud Database
+                  </p>
+
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-xs font-mono font-bold mt-4">
+                    <Clock className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Elapsed Time: {employeeLoadSeconds}s</span>
+                  </div>
+                </div>
+
+                {/* Skeleton KPI Cards Preview */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-6 max-w-lg mx-auto">
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-left space-y-1.5">
+                    <div className="h-2.5 bg-slate-200 rounded w-16 animate-pulse" />
+                    <div className="h-4 bg-slate-300 rounded w-12 animate-pulse" />
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-left space-y-1.5">
+                    <div className="h-2.5 bg-slate-200 rounded w-16 animate-pulse" />
+                    <div className="h-4 bg-slate-300 rounded w-12 animate-pulse" />
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-left space-y-1.5">
+                    <div className="h-2.5 bg-slate-200 rounded w-16 animate-pulse" />
+                    <div className="h-4 bg-slate-300 rounded w-12 animate-pulse" />
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-left space-y-1.5">
+                    <div className="h-2.5 bg-slate-200 rounded w-16 animate-pulse" />
+                    <div className="h-4 bg-slate-300 rounded w-12 animate-pulse" />
+                  </div>
+                </div>
+
+                {/* LATE DATA NOTIFICATION & OPTIONS (Appears after 3 seconds or on error) */}
+                {(employeeLoadSeconds >= 3 || employeeLoadError) && (
+                  <div className="mt-4 pt-4 border-t border-slate-100 animate-in fade-in duration-300">
+                    <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-300/80 text-left shadow-xs">
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 bg-amber-200/80 rounded-xl text-amber-800 flex-shrink-0 mt-0.5">
+                          <AlertCircle className="w-5 h-5 text-amber-700" />
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <h4 className="text-sm font-bold text-amber-950">
+                              {employeeLoadError
+                                ? 'క్లౌడ్ కనెక్షన్ విఫలమైంది (Cloud Connection Delayed)'
+                                : 'డేటా లోడ్ అవ్వడం ఆలస్యం అవుతోంది (Data is taking longer than usual)'}
+                            </h4>
+                            <span className="text-[10px] font-mono font-bold bg-amber-200 px-2 py-0.5 rounded-full text-amber-900">
+                              Slow Response ({employeeLoadSeconds}s)
+                            </span>
+                          </div>
+                          <p className="text-xs text-amber-900 mt-1 leading-relaxed">
+                            {employeeLoadError
+                              ? `${employeeLoadError} - The cloud server on Render enters idle sleep mode when inactive. Waking it up may take 15–30 seconds.`
+                              : 'The backend database server is waking up from idle sleep mode (Render cold start). You can choose to wait, retry, or continue to overview.'}
+                          </p>
+
+                          <div className="flex flex-wrap items-center gap-2.5 mt-3.5">
+                            <button
+                              type="button"
+                              onClick={fetchDashboardEmployees}
+                              className="px-3.5 py-2 text-xs font-bold rounded-xl bg-amber-700 hover:bg-amber-800 text-white shadow-xs transition-all flex items-center gap-1.5 active:scale-95"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              <span>Retry Connection (మళ్లీ ప్రయత్నించండి)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setIsEmployeeOfflineBypassed(true)}
+                              className="px-3.5 py-2 text-xs font-bold rounded-xl bg-[#166534] hover:bg-[#14532d] text-white shadow-xs transition-all flex items-center gap-1.5 active:scale-95"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Continue to Overview (కొనసాగించండి)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsEmployeeOfflineBypassed(true);
+                                setIsLoadingEmployees(false);
+                                onShowToast('Working with offline cache.');
+                              }}
+                              className="px-3 py-2 text-xs font-bold rounded-xl bg-white hover:bg-amber-100/70 text-amber-800 border border-amber-300 shadow-2xs transition-all flex items-center gap-1.5"
+                            >
+                              <WifiOff className="w-3.5 h-3.5" />
+                              <span>Dismiss / Work Offline</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <DashboardOverview
+                employees={employeesList}
+                onShowToast={onShowToast}
+              />
+            )
           )}
 
           {activeTab === 'employees' && (
@@ -338,6 +445,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               records={financeRecordsList}
               setRecords={setFinanceRecordsList}
               employees={employeesList}
+              userName={userName}
+              onShowToast={onShowToast}
+            />
+          )}
+
+          {activeTab === 'employee_portal' && (
+            <EmployeePortal
+              employees={employeesList}
+              userName={userName}
+              onShowToast={onShowToast}
+            />
+          )}
+
+          {activeTab === 'audit_logs' && (
+            <AuditLogs
               userName={userName}
               onShowToast={onShowToast}
             />

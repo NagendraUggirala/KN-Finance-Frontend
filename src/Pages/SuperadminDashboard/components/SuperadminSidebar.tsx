@@ -2,10 +2,11 @@ import React from 'react';
 import {
   Users,
   Bell,
-  ShieldCheck
+  ShieldCheck,
+  History
 } from 'lucide-react';
 
-export type SuperadminTab = 'users' | 'admins' | 'notifications';
+export type SuperadminTab = 'users' | 'admins' | 'notifications' | 'audit_logs';
 
 interface SuperadminSidebarProps {
   activeTab: SuperadminTab;
@@ -23,8 +24,10 @@ export const SuperadminSidebar: React.FC<SuperadminSidebarProps> = ({
 
   const navItems = [
     { id: 'admins' as SuperadminTab, label: 'Admin Management', icon: ShieldCheck, badge: 'Live API' },
+
     { id: 'users' as SuperadminTab, label: 'User Account Control', icon: Users, badge: 'Active' },
     { id: 'notifications' as SuperadminTab, label: 'System Notifications', icon: Bell, badge: 'Dispatch' },
+    { id: 'audit_logs' as SuperadminTab, label: 'Audit Logs', icon: History, badge: 'Audit Trail' },
   ];
 
   return (

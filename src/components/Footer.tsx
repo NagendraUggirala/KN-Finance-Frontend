@@ -20,7 +20,7 @@ export const Footer: React.FC<FooterProps> = ({ onShowToast }) => {
     <footer className="bg-white border-t border-slate-200 text-[#64748B] pt-16 pb-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10 pb-12 border-b border-slate-200">
-          
+
           {/* Col 1: Brand Info */}
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center gap-3">
@@ -33,6 +33,7 @@ export const Footer: React.FC<FooterProps> = ({ onShowToast }) => {
             <p className="text-[#64748B] text-sm leading-relaxed max-w-sm">
               KN Finance empowers modern investors and corporations with AI-driven wealth strategies, high-yield vaults, and bank-grade security.
             </p>
+
 
             <div className="flex items-center gap-3 pt-2">
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 border border-slate-200 text-[#0F172A]">

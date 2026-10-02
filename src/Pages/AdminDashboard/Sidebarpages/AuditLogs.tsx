@@ -571,14 +571,14 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({
     <div className="space-y-6 animate-in fade-in duration-300">
       
       {/* 1. Header Section */}
-      <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-xs">
+      <div className="p-6 rounded-3xl bg-white border border-[#C5E1A5] shadow-xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1.5 flex-wrap">
               <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider ${
                 isSuperAdmin 
                   ? 'bg-amber-50 text-amber-900 border border-amber-300' 
-                  : 'bg-emerald-50 text-[#166534] border border-emerald-200'
+                  : 'bg-emerald-50 text-[#166534] border border-[#C5E1A5]'
               }`}>
                 <ShieldCheck className={`w-3.5 h-3.5 ${isSuperAdmin ? 'text-amber-700' : 'text-[#166534]'}`} />
                 {isSuperAdmin ? 'Super Admin Audit Suite' : 'Security & Compliance'}
@@ -599,7 +599,7 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({
               type="button"
               onClick={fetchAuditLogs}
               disabled={isLoading || isClearing}
-              className="h-10 px-3.5 inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all border border-slate-200 cursor-pointer disabled:opacity-60"
+              className="h-10 px-3.5 inline-flex items-center justify-center gap-2 rounded-xl bg-[#F2F8E1]/60 hover:bg-[#E2F0C2] text-slate-700 text-xs font-bold transition-all border border-[#C5E1A5] cursor-pointer disabled:opacity-60"
               title="Refresh audit activity stream"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-[#166534]' : 'text-slate-500'}`} />

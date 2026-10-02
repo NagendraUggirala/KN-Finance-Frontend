@@ -464,8 +464,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       </div>
 
       {/* Filter and Search Panel */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4">
-        <div className="flex items-center gap-2 text-xs font-extrabold text-slate-400 uppercase tracking-wider">
+      <div className="p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs space-y-4">
+        <div className="flex items-center gap-2 text-xs font-extrabold text-[#166534] uppercase tracking-wider">
           <Filter className="w-3.5 h-3.5 text-[#166534]" />
           <span>Operational Filters</span>
         </div>
@@ -473,13 +473,13 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Search bar */}
           <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+            <Search className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search by name, ID, village..."
-              className="w-full pl-9 pr-4 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 text-[#0F172A] focus:outline-none focus:border-[#166534] focus:bg-white transition-all"
+              className="w-full pl-9 pr-4 py-2 text-xs rounded-xl bg-[#F2F8E1]/40 border border-[#C5E1A5] text-[#0F172A] focus:outline-none focus:border-[#166534] focus:bg-white transition-all"
             />
           </div>
 
@@ -488,7 +488,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="w-full px-3.5 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 text-[#0F172A] focus:outline-none focus:border-[#166534] focus:bg-white transition-all"
+              className="w-full px-3.5 py-2 text-xs rounded-xl bg-[#F2F8E1]/40 border border-[#C5E1A5] text-[#0F172A] focus:outline-none focus:border-[#166534] focus:bg-white transition-all cursor-pointer font-bold"
             >
               <option value="All">All Statuses</option>
               <option value="Active">Active</option>
@@ -501,7 +501,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
             <select
               value={villageFilter}
               onChange={(e) => setVillageFilter(e.target.value)}
-              className="w-full px-3.5 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 text-[#0F172A] focus:outline-none focus:border-[#166534] focus:bg-white transition-all"
+              className="w-full px-3.5 py-2 text-xs rounded-xl bg-[#F2F8E1]/40 border border-[#C5E1A5] text-[#0F172A] focus:outline-none focus:border-[#166534] focus:bg-white transition-all cursor-pointer font-bold"
             >
               <option value="All">All Villages</option>
               {uniqueVillages.map(v => (
@@ -515,7 +515,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
             <select
               value={areaFilter}
               onChange={(e) => setAreaFilter(e.target.value)}
-              className="w-full px-3.5 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 text-[#0F172A] focus:outline-none focus:border-[#166534] focus:bg-white transition-all"
+              className="w-full px-3.5 py-2 text-xs rounded-xl bg-[#F2F8E1]/40 border border-[#C5E1A5] text-[#0F172A] focus:outline-none focus:border-[#166534] focus:bg-white transition-all cursor-pointer font-bold"
             >
               <option value="All">All Assigned Areas</option>
               {uniqueAreas.map(a => (
@@ -527,11 +527,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       </div>
 
       {/* Employee List Table */}
-      <div className="rounded-2xl bg-white border border-slate-200 shadow-xs overflow-hidden">
+      <div className="rounded-2xl bg-white border border-[#C5E1A5] shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/50 text-[#64748B] font-bold">
+              <tr className="border-b border-[#C5E1A5] bg-[#F2F8E1] text-[#166534] font-bold">
                 <th className="p-4 w-14">ID</th>
                 <th className="p-4">Name & Profile</th>
                 <th className="p-4">Contact Info</th>
@@ -543,10 +543,10 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                 <th className="p-4 text-center">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 text-[#0F172A]">
+            <tbody className="divide-y divide-[#C5E1A5]/40 text-[#0F172A]">
               {filteredEmployees.length > 0 ? (
                 filteredEmployees.map((emp) => (
-                  <tr key={emp.employeeId} className="hover:bg-slate-50/70 transition-colors">
+                  <tr key={emp.employeeId} className="hover:bg-[#F2F8E1]/40 transition-colors">
                     {/* ID */}
                     <td className="p-4 font-mono font-bold text-slate-500">{emp.employeeId}</td>
 

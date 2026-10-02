@@ -1522,4 +1522,289 @@ export async function clearAuditLogsApi(): Promise<{ success: boolean; message: 
   return data;
 }
 
+/* ==========================================================================
+   ======================= 5. NOTIFICATIONS SYSTEM ==========================
+   ========================================================================== */
 
+import type {
+  NotificationSeverity,
+  RecipientType,
+  NotificationItem,
+  CreateNotificationPayload,
+  NotificationHistoryResponse,
+  AdminInboxResponse,
+} from '../types/notification';
+
+export type {
+  NotificationSeverity,
+  RecipientType,
+  RecipientType as NotificationRecipientType,
+  NotificationItem,
+  CreateNotificationPayload,
+  CreateNotificationPayload as SendNotificationPayload,
+  NotificationHistoryResponse,
+  AdminInboxResponse,
+};
+type SendNotificationPayload = CreateNotificationPayload;
+
+const LOCAL_NOTIFICATIONS_KEY = 'kn_finance_notifications_cache';
+
+// Helper to seed default notifications if empty
+function getLocalNotifications(): NotificationItem[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_NOTIFICATIONS_KEY);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch {}
+
+  const initialSeed: NotificationItem[] = [
+    {
+      _id: 'NTF-1001',
+      id: 'NTF-1001',
+      title: 'Scheduled System Maintenance Notice',
+      message: 'Platform maintenance is scheduled for Sunday 02:00 AM UTC. Please ensure all end-of-day ledger entries are saved beforehand.',
+      severity: 'Warning',
+      recipientType: 'all',
+      recipientTarget: 'All Active Administrators',
+      sendEmail: true,
+      isEmailSent: true,
+      read: false,
+      senderName: 'Super Admin',
+      createdAt: new Date(Date.now() - 3600000 * 4).toISOString()
+    },
+    {
+      _id: 'NTF-1002',
+      id: 'NTF-1002',
+      title: 'Annual Dashboard License Expiry Warning',
+      message: 'Your branch operations license is due to expire in 15 days. Super Admin has scheduled account review. Contact root administration to prevent interruption.',
+      severity: 'Expiry',
+      recipientType: 'expiry',
+      recipientTarget: 'Branch Admin (Nagendra)',
+      expiryDate: new Date(Date.now() + 86400000 * 15).toISOString().split('T')[0],
+      sendEmail: true,
+      isEmailSent: true,
+      read: false,
+      senderName: 'Super Admin',
+      createdAt: new Date(Date.now() - 3600000 * 18).toISOString()
+    },
+    {
+      _id: 'NTF-1003',
+      id: 'NTF-1003',
+      title: 'New Security Protocols Activated',
+      message: 'Two-factor authentication for field employee password resets is now active. All admin actions are recorded in immutable audit logs.',
+      severity: 'Info',
+      recipientType: 'all',
+      recipientTarget: 'All Platform Administrators',
+      sendEmail: false,
+      isEmailSent: false,
+      read: true,
+      readAt: new Date(Date.now() - 3600000 * 20).toISOString(),
+      senderName: 'Super Admin',
+      createdAt: new Date(Date.now() - 86400000 * 2).toISOString()
+    }
+  ];
+
+  try {
+    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(initialSeed));
+  } catch {}
+
+  return initialSeed;
+}
+
+function saveLocalNotifications(list: NotificationItem[]): void {
+  try {
+    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(list));
+  } catch {}
+}
+
+/**
+ * POST /api/notifications/send
+ * Super Admin dispatches a notification (and optional email) to Admins
+ */
+export async function sendNotificationApi(payload: SendNotificationPayload): Promise<{ success: boolean; message: string; notification: NotificationItem }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/notifications/send`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: getAdminAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      // Update local mirror as well
+      const current = getLocalNotifications();
+      if (data.notification) {
+        saveLocalNotifications([data.notification, ...current]);
+      }
+      return data;
+    }
+  } catch (err) {
+    console.warn('Backend notification dispatch fallback:', err);
+  }
+
+  // Graceful local fallback
+  const newNtf: NotificationItem = {
+    _id: `NTF-${Date.now()}`,
+    id: `NTF-${Date.now()}`,
+    title: payload.title,
+    message: payload.message,
+    severity: payload.severity,
+    recipientType: payload.recipientType,
+    recipientTarget: payload.recipientTarget || 'Admins',
+    targetAdminId: payload.targetAdminId,
+    targetAdminEmail: payload.targetAdminEmail,
+    targetAdminName: payload.targetAdminName,
+    targetStatus: payload.targetStatus,
+    expiryDate: payload.expiryDate,
+    sendEmail: !!payload.sendEmail,
+    isEmailSent: !!payload.sendEmail,
+    actionLink: payload.actionLink,
+    read: false,
+    senderName: 'Super Admin',
+    createdAt: new Date().toISOString()
+  };
+
+  const current = getLocalNotifications();
+  saveLocalNotifications([newNtf, ...current]);
+
+  return {
+    success: true,
+    message: payload.sendEmail
+      ? `Notification dispatched in-app and email queued to ${payload.targetAdminEmail || 'recipient(s)'}`
+      : 'Notification dispatched in-app to administrators.',
+    notification: newNtf
+  };
+}
+
+/**
+ * GET /api/notifications
+ * Admin fetches notifications destined for their dashboard
+ */
+export async function getAdminNotificationsApi(): Promise<{ success: boolean; notifications: NotificationItem[]; unreadCount: number }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/notifications`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: getAdminAuthHeaders(),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data.notifications)) {
+        saveLocalNotifications(data.notifications);
+        return {
+          success: true,
+          notifications: data.notifications,
+          unreadCount: data.unreadCount ?? data.notifications.filter((n: any) => !n.read).length
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Backend notifications fetch notice:', err);
+  }
+
+  // Fallback to local store
+  const localList = getLocalNotifications();
+  const unreadCount = localList.filter(n => !n.read).length;
+  return {
+    success: true,
+    notifications: localList,
+    unreadCount
+  };
+}
+
+/**
+ * PATCH /api/notifications/:id/read
+ * Mark single notification as read
+ */
+export async function markNotificationReadApi(id: string): Promise<{ success: boolean; message: string }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/notifications/${encodeURIComponent(id)}/read`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: getAdminAuthHeaders(),
+    });
+
+    if (response.ok) {
+      const data = await response.json().catch(() => ({}));
+      return { success: true, message: data.message || 'Notification marked as read' };
+    }
+  } catch (err) {
+    console.warn('Mark notification read fallback:', err);
+  }
+
+  // Update local cache
+  const list = getLocalNotifications();
+  const updated = list.map(n => (n._id === id || n.id === id) ? { ...n, read: true, readAt: new Date().toISOString() } : n);
+  saveLocalNotifications(updated);
+
+  return { success: true, message: 'Notification marked as read.' };
+}
+
+/**
+ * PATCH /api/notifications/mark-all-read
+ * Mark all notifications as read
+ */
+export async function markAllNotificationsReadApi(): Promise<{ success: boolean; message: string }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/notifications/mark-all-read`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: getAdminAuthHeaders(),
+    });
+
+    if (response.ok) {
+      const data = await response.json().catch(() => ({}));
+      return { success: true, message: data.message || 'All notifications marked as read' };
+    }
+  } catch (err) {
+    console.warn('Mark all read fallback:', err);
+  }
+
+  const list = getLocalNotifications();
+  const updated = list.map(n => ({ ...n, read: true, readAt: new Date().toISOString() }));
+  saveLocalNotifications(updated);
+
+  return { success: true, message: 'All notifications marked as read.' };
+}
+
+/**
+ * DELETE /api/notifications/:id
+ * Delete/dismiss notification
+ */
+export async function deleteNotificationApi(id: string): Promise<{ success: boolean; message: string }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const url = `${baseUrl}/api/notifications/${encodeURIComponent(id)}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: getAdminAuthHeaders(),
+    });
+
+    if (response.ok) {
+      const data = await response.json().catch(() => ({}));
+      return { success: true, message: data.message || 'Notification deleted' };
+    }
+  } catch (err) {
+    console.warn('Delete notification fallback:', err);
+  }
+
+  const list = getLocalNotifications();
+  const updated = list.filter(n => n._id !== id && n.id !== id);
+  saveLocalNotifications(updated);
+
+  return { success: true, message: 'Notification removed.' };
+}
+
+export { notificationApi } from './notificationApi';

@@ -11,7 +11,8 @@ import { EmployeeDirectory } from './Sidebarpages/EmployeeDirectory';
 import { FinanceBook } from './Sidebarpages/FinanceBook';
 import { EmployeePortal } from './Sidebarpages/EmployeePortal';
 import { AuditLogs } from './Sidebarpages/AuditLogs';
-import { getAdminEmployeesApi } from '../../lib/api';
+import { AdminNotifications } from './Sidebarpages/AdminNotifications';
+import { getAdminEmployeesApi, notificationApi } from '../../lib/api';
 
 interface AdminDashboardProps {
   userName: string;
@@ -50,6 +51,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [employeeLoadSeconds, setEmployeeLoadSeconds] = useState<number>(0);
   const [employeeLoadError, setEmployeeLoadError] = useState<string | null>(null);
   const [isEmployeeOfflineBypassed, setIsEmployeeOfflineBypassed] = useState<boolean>(false);
+
+  // Unread System Notifications count from backend API
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
+
+  const fetchUnreadNotifications = async () => {
+    try {
+      const count = await notificationApi.getUnreadCount();
+      setUnreadNotificationsCount(count);
+    } catch (err) {
+      console.warn('Failed to fetch unread notification count:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchUnreadNotifications();
+    // Poll unread count every 30s to keep header notification bell synchronized
+    const interval = setInterval(fetchUnreadNotifications, 30000);
+    return () => clearInterval(interval);
+  }, [activeTab]);
 
   // Live timer for tracking cloud response latency
   useEffect(() => {
@@ -111,7 +131,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Derived counts for sidebar badges
   const totalCount = employeesList.length;
-  const inactiveCount = employeesList.filter(e => e.status === 'Inactive').length;
   const financeCount = financeRecordsList.length;
 
   const handleExportData = () => {
@@ -220,7 +239,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   return (
-    <div className="h-screen bg-[#F8FAFC] flex flex-col font-sans overflow-hidden">
+    <div className="h-screen bg-[#F5F9E8] text-[#0F172A] flex flex-col font-sans overflow-hidden">
 
       {/* Top Admin Navbar */}
       <AdminNavbar
@@ -228,7 +247,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         onLogout={onLogout}
         onShowToast={onShowToast}
         toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-        unreadCount={inactiveCount}
+        unreadCount={unreadNotificationsCount}
+        onOpenNotifications={() => setActiveTab('notifications')}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -241,13 +261,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           onCloseMobile={() => setSidebarOpen(false)}
           employeeCount={totalCount}
           financeCount={financeCount}
+          unreadCount={unreadNotificationsCount}
         />
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
 
           {/* Header Banner (Hidden during print) */}
-          <div className="no-print flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs">
+          <div className="no-print flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-[11px] font-extrabold text-[#166534] uppercase tracking-wider bg-[#166534]/10 px-2 py-0.5 rounded border border-[#166534]/20">
@@ -260,12 +281,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {activeTab === 'employees' && 'Employee Registry & Lifecycle'}
                 {activeTab === 'finance_book' && 'Finance Ledger Book '}
                 {activeTab === 'employee_portal' && 'Field Officer & Borrower Route Portal'}
+                {activeTab === 'audit_logs' && 'Centralized Audit Logs'}
+                {activeTab === 'notifications' && 'System Notifications & Advisories'}
               </h1>
               <p className="text-xs text-[#64748B]">
                 {activeTab === 'overview' && 'Monitor branch liquidity, revenues, and general deployment telemetry.'}
                 {activeTab === 'employees' && 'View, add, edit, or delete staff records, manage credentials, and assign operational areas.'}
                 {activeTab === 'finance_book' && 'Manage installment columns, borrower ledger rows, and batch-sync ledger state.'}
                 {activeTab === 'employee_portal' && 'Simulate or operate field collections, verify borrower balances, and generate instant receipts.'}
+                {activeTab === 'audit_logs' && 'Immutable audit trail of administrator and system activities.'}
+                {activeTab === 'notifications' && 'Review broadcast advisories, account status updates, and license expiry alerts from Super Admin.'}
               </p>
             </div>
 
@@ -462,6 +487,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <AuditLogs
               userName={userName}
               onShowToast={onShowToast}
+            />
+          )}
+
+          {activeTab === 'notifications' && (
+            <AdminNotifications
+              userName={userName}
+              onShowToast={onShowToast}
+              onNotificationReadChange={fetchUnreadNotifications}
             />
           )}
 

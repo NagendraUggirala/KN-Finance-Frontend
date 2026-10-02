@@ -449,27 +449,27 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
         {/* Today's Collections Total */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs relative overflow-hidden group hover:border-[#166534]/40 transition-all">
+        <div className="p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs relative overflow-hidden group hover:border-[#166534]/60 transition-all">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Today's Collections</span>
-            <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-[#E8F5C8] text-[#166534] flex items-center justify-center font-bold">
               <Banknote className="w-5 h-5" />
             </div>
           </div>
           <div className="text-2xl font-black text-[#0F172A] font-display">
             ₹{todayCollectedTotal.toLocaleString('en-IN')}
           </div>
-          <div className="flex items-center gap-1.5 mt-2 text-[11px] font-bold text-emerald-700">
+          <div className="flex items-center gap-1.5 mt-2 text-[11px] font-bold text-[#166534]">
             <TrendingUp className="w-3.5 h-3.5" />
             <span>{recentCollections.length} receipts generated today</span>
           </div>
         </div>
 
         {/* Assigned Active Borrowers */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs relative overflow-hidden group hover:border-[#166534]/40 transition-all">
+        <div className="p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs relative overflow-hidden group hover:border-[#166534]/60 transition-all">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Assigned Borrowers</span>
-            <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-[#F2F8E1] text-[#166534] flex items-center justify-center font-bold">
               <Layers className="w-5 h-5" />
             </div>
           </div>
@@ -477,17 +477,17 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
             {activeBorrowersCount}
             <span className="text-xs text-slate-400 font-normal ml-1">/ {borrowers.length} total</span>
           </div>
-          <div className="flex items-center gap-1.5 mt-2 text-[11px] font-bold text-blue-700">
+          <div className="flex items-center gap-1.5 mt-2 text-[11px] font-bold text-[#166534]">
             <MapPin className="w-3.5 h-3.5" />
             <span>{currentEmployee?.assignedOperationalArea || 'All Sectors'}</span>
           </div>
         </div>
 
         {/* Route Principal Deployed */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs relative overflow-hidden group hover:border-[#166534]/40 transition-all">
+        <div className="p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs relative overflow-hidden group hover:border-[#166534]/60 transition-all">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Route Principal</span>
-            <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center font-bold">
               <IndianRupee className="w-5 h-5" />
             </div>
           </div>
@@ -500,17 +500,17 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
         </div>
 
         {/* Remaining Field Balance */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs relative overflow-hidden group hover:border-[#166534]/40 transition-all">
+        <div className="p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs relative overflow-hidden group hover:border-[#166534]/60 transition-all">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Outstanding Balance</span>
-            <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-[#F2F8E1] text-[#166534] flex items-center justify-center font-bold">
               <CreditCard className="w-5 h-5" />
             </div>
           </div>
           <div className="text-2xl font-black text-[#0F172A] font-display">
             ₹{totalRouteRemaining.toLocaleString('en-IN')}
           </div>
-          <div className="flex items-center gap-1.5 mt-2 text-[11px] font-bold text-purple-800">
+          <div className="flex items-center gap-1.5 mt-2 text-[11px] font-bold text-[#166534]">
             <span>Pending collection recovery</span>
           </div>
         </div>
@@ -523,7 +523,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
         {/* Left 2 Cols: Assigned Route Borrowers List */}
         <div className="lg:col-span-2 space-y-4">
 
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+          <div className="bg-white border border-[#C5E1A5] rounded-2xl p-5 shadow-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
               <div>
                 <h3 className="text-base font-extrabold text-[#0F172A]">Field Borrower Route (ఖాతాదారుల జాబితా)</h3>

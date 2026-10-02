@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Printer,
   Search,
@@ -15,7 +15,12 @@ import {
   CheckCircle2,
   BookOpen,
   Sparkles,
-  WifiOff
+  WifiOff,
+  Calculator,
+  TrendingUp,
+  Receipt,
+  Layers,
+  IndianRupee
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { Employee, FinanceRecord } from '../types';
@@ -100,6 +105,18 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
     type: 'saving' | 'success' | 'error';
     message: string;
   } | null>(null);
+
+  // Active Section: 'ledger' (Interactive Book) vs 'remaining_exports' (Remaining Balances, Calculations & PDF Reports)
+  const [activeFinanceSection, setActiveFinanceSection] = useState<'ledger' | 'remaining_exports'>('ledger');
+
+  // Calculator State (Interactive Loan & Interest Calculator)
+  const [calcPrincipal, setCalcPrincipal] = useState<number>(10000);
+  const [calcInterestRate, setCalcInterestRate] = useState<number>(5);
+  const [calcWeeks, setCalcWeeks] = useState<number>(10);
+
+  // Remaining Balances Table status filter & search
+  const [remainingTableFilter, setRemainingTableFilter] = useState<'all' | 'due' | 'settled'>('all');
+  const [remainingSearchTerm, setRemainingSearchTerm] = useState<string>('');
 
   // Helper variables for reading vs editing
   const currentRows = isEditing ? tempRows : rows;
@@ -706,6 +723,91 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
     );
   });
 
+  // Real-time calculations for book ledger footer totals (Admin Dashboard)
+  const { totalPrincipal, totalPaidAll, totalRemainingAll, colSums } = useMemo(() => {
+    let principal = 0;
+    let paid = 0;
+    let rem = 0;
+    const sums: number[] = new Array(currentDateColumns.length).fill(0);
+
+    filteredRows.forEach(row => {
+      const { totalPaid, remaining, amount } = getRowTotals(row);
+      principal += amount;
+      paid += totalPaid;
+      rem += remaining;
+      currentDateColumns.forEach((_, colIdx) => {
+        const pay = getPayment(row, colIdx);
+        const payAmt = parseFloat((pay.amount || '').replace(/,/g, '')) || 0;
+        sums[colIdx] += payAmt;
+      });
+    });
+
+    return {
+      totalPrincipal: principal,
+      totalPaidAll: paid,
+      totalRemainingAll: rem,
+      colSums: sums
+    };
+  }, [filteredRows, currentDateColumns]);
+
+  // Derived financial calculation values
+  const overallRecoveryRate = totalPrincipal > 0
+    ? Math.min(100, Math.round((totalPaidAll / totalPrincipal) * 100))
+    : 0;
+
+  // Interactive Loan & Weekly Interest Calculator derived values
+  const calcTotalInterest = Math.round(calcPrincipal * (calcInterestRate / 100));
+  const calcTotalPayable = calcPrincipal + calcTotalInterest;
+  const calcWeeklyInstallment = calcWeeks > 0 ? Math.round(calcTotalPayable / calcWeeks) : 0;
+  const calcDailyInstallment = calcWeeks > 0 ? Math.round(calcTotalPayable / (calcWeeks * 7)) : 0;
+
+  // Filtered rows for the Remaining Balances Table
+  const remainingTableRows = useMemo(() => {
+    return filteredRows.filter((row) => {
+      const { remaining } = getRowTotals(row);
+      if (remainingTableFilter === 'due' && (row.isClosed || remaining <= 0)) {
+        return false;
+      }
+      if (remainingTableFilter === 'settled' && (!row.isClosed && remaining > 0)) {
+        return false;
+      }
+      if (remainingSearchTerm.trim()) {
+        const term = remainingSearchTerm.toLowerCase();
+        const matches =
+          (row.nameTelugu || '').toLowerCase().includes(term) ||
+          (row.nameEnglish || '').toLowerCase().includes(term) ||
+          (row.name || '').toLowerCase().includes(term) ||
+          (row.sNo || '').toLowerCase().includes(term) ||
+          (row.item || '').toLowerCase().includes(term);
+        if (!matches) return false;
+      }
+      return true;
+    });
+  }, [filteredRows, remainingTableFilter, remainingSearchTerm]);
+
+  // Status toggle handler for settlement register
+  const handleToggleStatus = async (row: LedgerRowData) => {
+    const newStatus = !row.isClosed;
+    const updated = rows.map((r) => (r.id === row.id ? { ...r, isClosed: newStatus } : r));
+    setRows(updated);
+    if (isEditing) {
+      setTempRows(tempRows.map((r) => (r.id === row.id ? { ...r, isClosed: newStatus } : r)));
+    }
+
+    const validId = row._id || (row.id && /^[0-9a-fA-F]{24}$/.test(row.id) ? row.id : null);
+    if (validId) {
+      try {
+        await updateBorrowerStatusApi(validId, newStatus);
+        onShowToast(`ఖాతా స్థితి మార్చబడింది (${newStatus ? 'పూర్తయింది / Closed' : 'యాక్టివ్ / Active'})! ✅`);
+      } catch (err: any) {
+        console.warn('Backend status update notice:', err.message);
+        onShowToast(`స్థితి మార్చబడింది (${newStatus ? 'Closed' : 'Active'})`);
+      }
+    } else {
+      onShowToast(`స్థితి మార్చబడింది (${newStatus ? 'Closed' : 'Active'}).`);
+    }
+  };
+
   // Export Finance Book to genuine Excel spreadsheet (.xlsx)
   const handleExportExcel = () => {
     try {
@@ -1001,7 +1103,6 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
   const totalPaidPct = isVeryManyCols ? 6.5 : isManyCols ? 7.5 : 9.0;
   const remainingPct = isVeryManyCols ? 6.5 : isManyCols ? 7.5 : 9.0;
   const statusPct = isVeryManyCols ? 4.0 : isManyCols ? 4.5 : 5.5;
-
   const fixedTotalPct = sNoPct + datePct + teNamePct + enNamePct + itemPct + amountPct + totalPaidPct + remainingPct + statusPct;
   const installmentColPct = colCount > 0 ? (100 - fixedTotalPct) / colCount : 0;
 
@@ -1016,13 +1117,13 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
         }
         
         .desk-bg {
-          background-color: #0f172a;
+          background-color: #F2F8E1;
           background-image: 
-          radial-gradient(circle at 50% 50%, rgba(212, 175, 55, 0.06) 0%, transparent 80%),
-          radial-gradient(circle at 10% 20%, rgba(6, 182, 212, 0.05) 0%, transparent 50%),
-          linear-gradient(to right, rgba(255, 255, 255, 0.01) 1px, transparent 1px),
-          linear-gradient(to bottom, rgba(255, 255, 255, 0.01) 1px, transparent 1px);
-          background-size: auto, auto, 50px 50px, 50px 50px;
+            radial-gradient(circle at 50% 50%, rgba(22, 101, 52, 0.05) 0%, transparent 80%),
+            radial-gradient(circle at 10% 20%, rgba(197, 225, 165, 0.3) 0%, transparent 50%),
+            linear-gradient(to right, rgba(197, 225, 165, 0.35) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(197, 225, 165, 0.35) 1px, transparent 1px);
+          background-size: auto, auto, 36px 36px, 36px 36px;
         }
 
         .paper-grain {
@@ -1047,25 +1148,25 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
 
         .book-binding-gutter {
           background: linear-gradient(to right, 
-            rgba(15, 23, 42, 0.25) 0%, 
+            rgba(22, 101, 52, 0.15) 0%, 
             rgba(120, 90, 40, 0.15) 30%, 
-            rgba(212, 175, 55, 0.25) 46%, 
-            rgba(15, 23, 42, 0.6) 50%, 
-            rgba(212, 175, 55, 0.25) 54%, 
+            rgba(212, 160, 23, 0.25) 46%, 
+            rgba(22, 101, 52, 0.35) 50%, 
+            rgba(212, 160, 23, 0.25) 54%, 
             rgba(120, 90, 40, 0.15) 70%, 
-            rgba(15, 23, 42, 0.25) 100%
+            rgba(22, 101, 52, 0.15) 100%
           );
           z-index: 20;
         }
 
         .book-stacked-shadow {
           box-shadow: 
-            0 1px 3px rgba(0,0,0,0.3), 
+            0 2px 6px rgba(15, 23, 42, 0.08), 
             0 8px 0 -4px #faf8f5, 
-            0 8px 4px -3px rgba(0,0,0,0.3), 
+            0 8px 6px -3px rgba(22, 101, 52, 0.1), 
             0 16px 0 -8px #f5f2eb, 
-            0 16px 4px -7px rgba(0,0,0,0.3),
-            0 24px 40px rgba(0,0,0,0.55);
+            0 16px 8px -7px rgba(22, 101, 52, 0.08), 
+            0 20px 32px rgba(15, 23, 42, 0.12);
         }
 
         .ledger-cell-border {
@@ -1073,6 +1174,11 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
         }
 
         .double-header-border {
+          border-bottom: 4px double #b45309 !important;
+        }
+
+        .double-footer-border {
+          border-top: 2px solid #b45309 !important;
           border-bottom: 4px double #b45309 !important;
         }
 
@@ -1193,828 +1299,1478 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
         }
       `}} />
 
-      {/* 1. External Control Panel above the book (Hidden in print) */}
-      <div className="no-print flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4 p-4 rounded-2xl bg-white border border-slate-200 shadow-xs">
 
-        {/* Search filter input */}
-        <div className="relative w-full lg:w-96 flex-shrink-0">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="పేరు (తెలుగు / English) లేదా నెంబర్ ద్వారా వెతకండి..."
-            className="w-full h-10 pl-10 pr-9 text-xs sm:text-[13px] bg-slate-50/80 hover:bg-slate-100/70 focus:bg-white border border-slate-200 focus:border-[#166534] focus:ring-2 focus:ring-[#166534]/15 rounded-xl text-slate-900 placeholder-slate-400 transition-all outline-none font-medium"
-          />
-          {searchTerm && (
-            <button
-              type="button"
-              onClick={() => setSearchTerm('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full transition-colors"
-              title="Clear search"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
 
-        {/* Action Controls - Single Row */}
-        <div className="flex items-center flex-wrap sm:flex-nowrap gap-2 sm:gap-2.5 overflow-x-auto pb-1 sm:pb-0 justify-start lg:justify-end w-full lg:w-auto">
-          {/* Cloud Sync Status Badge & Refresh Button */}
-          <button
-            onClick={fetchActiveLedger}
-            disabled={isSyncingWithBackend}
-            className="h-10 px-3 inline-flex items-center justify-center gap-1.5 text-xs font-bold rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all border border-slate-200"
-            title="Sync Ledger with Cloud Backend"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingWithBackend ? 'animate-spin text-[#166534]' : 'text-slate-500'}`} />
-            <span className="hidden sm:inline">{isSyncingWithBackend ? `Syncing (${loadingSeconds}s)...` : lastSyncTime ? `Synced ${lastSyncTime}` : 'Sync DB'}</span>
-          </button>
+      {activeFinanceSection === 'ledger' && (
+        <>
+          {/* 1. External Control Panel above the book (Hidden in print) */}
+          <div className="no-print flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4 p-4 rounded-2xl bg-[#F2F8E1]/80 backdrop-blur-xs border border-[#C5E1A5] shadow-xs">
 
-          {!isEditing ? (
-            <>
-              {/* 1. Edit Ledger Button */}
-              <button
-                onClick={handleStartEdit}
-                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap"
-                title="Edit ledger entries and columns"
-              >
-                <Edit2 className="w-3.5 h-3.5 text-amber-100" />
-                <span>Edit Ledger</span>
-              </button>
-
-              {/* 2. Excel Sheet Button */}
-              <button
-                onClick={handleExportExcel}
-                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-[#166534] hover:from-emerald-700 hover:to-[#14532d] text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap"
-                title="Export complete book ledger data to Excel spreadsheet (.xlsx)"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-100" />
-                <span>Excel Sheet</span>
-              </button>
-
-              {/* 3. Export Page Data Button */}
-              <button
-                onClick={handleExportCSV}
-                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-700 hover:to-blue-800 text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap"
-                title="Export current page data as CSV"
-              >
-                <Download className="w-3.5 h-3.5 text-sky-100" />
-                <span>Export Page Data</span>
-              </button>
-
-              {/* 4. Print Ledger Button */}
-              <button
-                onClick={handlePrint}
-                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-slate-900 to-indigo-950 hover:from-black hover:to-indigo-900 text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap"
-                title="Print official finance ledger format"
-              >
-                <Printer className="w-3.5 h-3.5 text-indigo-200" />
-                <span>ప్రింట్ (Print Ledger)</span>
-              </button>
-            </>
-          ) : (
-            <>
-              {/* Save Changes Button */}
-              <button
-                onClick={handleSave}
-                disabled={isSaving}
-                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-[#166534] hover:from-emerald-700 hover:to-[#14532d] text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap disabled:opacity-75 cursor-pointer"
-              >
-                {isSaving ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-100" />
-                    <span>Saving Changes...</span>
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-3.5 h-3.5 text-emerald-100" />
-                    <span>Save Changes</span>
-                  </>
-                )}
-              </button>
-
-              {/* Cancel Button */}
-              <button
-                onClick={handleCancel}
-                disabled={isSaving}
-                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 shadow-xs hover:shadow-sm transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer disabled:opacity-60"
-              >
-                <X className="w-3.5 h-3.5 text-rose-500" />
-                <span>Cancel</span>
-              </button>
-
-              {/* Add Column */}
-              <button
-                onClick={handleAddColumn}
-                disabled={isSaving}
-                className="h-10 px-3.5 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 shadow-xs transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer disabled:opacity-60"
-              >
-                <Plus className="w-3.5 h-3.5 text-amber-700" />
-                <span>Add Date Column</span>
-              </button>
-
-              {/* Add Row */}
-              <button
-                onClick={handleAddRow}
-                disabled={isSaving}
-                className="h-10 px-3.5 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 shadow-xs transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer disabled:opacity-60"
-              >
-                <Plus className="w-3.5 h-3.5 text-teal-700" />
-                <span>Add Person Row</span>
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Real-time Save & Sync Status Banner */}
-      {saveNotification && (
-        <div
-          role="status"
-          aria-live="polite"
-          className={`p-3.5 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold transition-all shadow-sm ${
-            saveNotification.type === 'success'
-              ? 'bg-emerald-50 text-emerald-950 border border-emerald-300'
-              : saveNotification.type === 'error'
-              ? 'bg-rose-50 text-rose-950 border border-rose-300'
-              : 'bg-amber-50 text-amber-950 border border-amber-300'
-          }`}
-        >
-          <div className="flex items-center gap-2.5">
-            {saveNotification.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
-            {saveNotification.type === 'error' && <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
-            {saveNotification.type === 'saving' && <RefreshCw className="w-4 h-4 text-amber-600 animate-spin shrink-0" />}
-            <span>{saveNotification.message}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setSaveNotification(null)}
-            className="p-1 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
-            aria-label="Close notification"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* 2. Outer Desk Frame containing the Open Book Spread */}
-      <div className="screen-only-book print:hidden">
-        {/* Delayed Sync Banner when records are already on screen */}
-        {isSyncingWithBackend && rows.length > 0 && (
-          <div className="no-print mb-4 mx-auto w-full max-w-5xl bg-gradient-to-r from-amber-50 via-amber-100/70 to-amber-50 border border-amber-300 rounded-2xl p-3.5 shadow-sm animate-in fade-in duration-300">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-200/80 rounded-xl text-amber-800 flex-shrink-0 animate-pulse">
-                  <RefreshCw className="w-4 h-4 animate-spin text-amber-700" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-amber-950 text-xs sm:text-sm">
-                      ఖాతా పుస్తకం సింక్ అవుతోంది (Syncing Ledger with Cloud Database)
-                    </span>
-                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-200/90 text-amber-900">
-                      {loadingSeconds}s
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-amber-800 mt-0.5">
-                    {loadingSeconds >= 3
-                      ? 'Server response is taking longer than usual (Render cloud instance waking up from sleep).'
-                      : 'Connecting to database to verify latest entries and payment updates...'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-center">
-                {loadingSeconds >= 3 && (
-                  <button
-                    onClick={fetchActiveLedger}
-                    className="px-3 py-1.5 text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white rounded-xl shadow-xs transition-all flex items-center gap-1.5"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Retry Sync</span>
-                  </button>
-                )}
+            {/* Search filter input */}
+            <div className="relative w-full lg:w-96 flex-shrink-0">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="పేరు (తెలుగు / English) లేదా నెంబర్ ద్వారా వెతకండి..."
+                className="w-full h-10 pl-10 pr-9 text-xs sm:text-[13px] bg-white hover:bg-slate-50 focus:bg-white border border-[#C5E1A5] focus:border-[#166534] focus:ring-2 focus:ring-[#166534]/15 rounded-xl text-slate-900 placeholder-slate-400 transition-all outline-none font-medium"
+              />
+              {searchTerm && (
                 <button
-                  onClick={() => setIsSyncingWithBackend(false)}
-                  className="px-3 py-1.5 text-xs font-bold bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 rounded-xl transition-all"
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full transition-colors cursor-pointer"
+                  title="Clear search"
                 >
-                  Keep Local Data
+                  <X className="w-3.5 h-3.5" />
                 </button>
-              </div>
+              )}
+            </div>
+
+            {/* Action Controls - Single Row */}
+            <div className="flex items-center flex-wrap sm:flex-nowrap gap-2 sm:gap-2.5 overflow-x-auto pb-1 sm:pb-0 justify-start lg:justify-end w-full lg:w-auto">
+              {/* Cloud Sync Status Badge & Refresh Button */}
+              <button
+                onClick={fetchActiveLedger}
+                disabled={isSyncingWithBackend}
+                className="h-10 px-3 inline-flex items-center justify-center gap-1.5 text-xs font-bold rounded-xl bg-white hover:bg-[#E2F0C2] text-[#166534] transition-all border border-[#C5E1A5] shadow-xs cursor-pointer"
+                title="Sync Ledger with Cloud Backend"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingWithBackend ? 'animate-spin text-[#166534]' : 'text-[#166534]'}`} />
+                <span className="hidden sm:inline">{isSyncingWithBackend ? `Syncing (${loadingSeconds}s)...` : lastSyncTime ? `Synced ${lastSyncTime}` : 'Sync DB'}</span>
+              </button>
+
+              {!isEditing ? (
+                <>
+                  {/* 1. Edit Ledger Button */}
+                  <button
+                    onClick={handleStartEdit}
+                    className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-[#166534] hover:bg-[#14532d] text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer"
+                    title="Edit ledger entries and columns"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-[#D4A017]" />
+                    <span>Edit Ledger</span>
+                  </button>
+
+                  {/* Switch to Remaining Balances & Calculations Section */}
+                  <button
+                    onClick={() => setActiveFinanceSection('remaining_exports')}
+                    className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-white hover:bg-[#E2F0C2] text-[#166534] border border-[#C5E1A5] shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer"
+                    title="బాకీ లెక్కలు & రిపోర్ట్స్ (Remaining Balances, Calculations & Reports)"
+                  >
+                    <Calculator className="w-3.5 h-3.5 text-[#166534]" />
+                    <span>బాకీ లెక్కలు & రిపోర్ట్స్</span>
+                  </button>
+
+                  {/* 2. Excel Sheet Button */}
+                  <button
+                    onClick={handleExportExcel}
+                    className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-white hover:bg-[#E2F0C2] text-[#166534] border border-[#C5E1A5] shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer"
+                    title="Export complete book ledger data to Excel spreadsheet (.xlsx)"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-[#166534]" />
+                    <span>Excel Sheet</span>
+                  </button>
+
+                  {/* 3. Export Page Data Button */}
+                  <button
+                    onClick={handleExportCSV}
+                    className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-white hover:bg-[#E2F0C2] text-[#166534] border border-[#C5E1A5] shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer"
+                    title="Export current page data as CSV"
+                  >
+                    <Download className="w-3.5 h-3.5 text-[#166534]" />
+                    <span>Export CSV</span>
+                  </button>
+
+                  {/* 4. Print Ledger Button */}
+                  <button
+                    onClick={handlePrint}
+                    className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-800 to-[#166534] hover:from-emerald-900 hover:to-[#14532d] text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer"
+                    title="Print official finance ledger format"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-emerald-200" />
+                    <span>ప్రింట్ (Print Ledger)</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  {/* Save Changes Button */}
+                  <button
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-[#166534] hover:bg-[#14532d] text-white shadow-xs hover:shadow transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap disabled:opacity-75 cursor-pointer"
+                  >
+                    {isSaving ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-100" />
+                        <span>Saving Changes...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-3.5 h-3.5 text-[#D4A017]" />
+                        <span>Save Changes</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Cancel Button */}
+                  <button
+                    onClick={handleCancel}
+                    disabled={isSaving}
+                    className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 shadow-xs hover:shadow-sm transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer disabled:opacity-60"
+                  >
+                    <X className="w-3.5 h-3.5 text-rose-500" />
+                    <span>Cancel</span>
+                  </button>
+
+                  {/* Add Column */}
+                  <button
+                    onClick={handleAddColumn}
+                    disabled={isSaving}
+                    className="h-10 px-3.5 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-[#E8F5C8] hover:bg-[#DCECB5] text-[#166534] border border-[#C5E1A5] shadow-xs transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer disabled:opacity-60"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-[#166534]" />
+                    <span>Add Date Column</span>
+                  </button>
+
+                  {/* Add Row */}
+                  <button
+                    onClick={handleAddRow}
+                    disabled={isSaving}
+                    className="h-10 px-3.5 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-[#F2F8E1] hover:bg-[#E2F0C2] text-[#166534] border border-[#C5E1A5] shadow-xs transition-all transform hover:scale-[1.01] active:scale-[0.98] whitespace-nowrap cursor-pointer disabled:opacity-60"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-[#166534]" />
+                    <span>Add Person Row</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
-        )}
 
-        <div className="desk-bg flex-1 p-2 md:p-6 lg:p-10 rounded-2xl flex items-start justify-center overflow-x-auto scrollbar-book min-h-[580px]">
-          {isSyncingWithBackend && rows.length === 0 && !isOfflineBypassed ? (
-            /* Dedicated Ledger Loading Container with Late-Data Handling */
-            <div className="max-w-2xl w-full bg-[#fdfbf7] paper-grain rounded-3xl p-6 sm:p-10 border-2 border-[#b45309]/30 shadow-2xl relative overflow-hidden text-center my-6 mx-auto animate-in fade-in zoom-in-95 duration-300">
-              {/* Decorative Vintage Book Corner Ornaments */}
-              <div className="absolute top-3 left-3 w-8 h-8 border-t-2 border-l-2 border-amber-800/40 rounded-tl-lg pointer-events-none" />
-              <div className="absolute top-3 right-3 w-8 h-8 border-t-2 border-r-2 border-amber-800/40 rounded-tr-lg pointer-events-none" />
-              <div className="absolute bottom-3 left-3 w-8 h-8 border-b-2 border-l-2 border-amber-800/40 rounded-bl-lg pointer-events-none" />
-              <div className="absolute bottom-3 right-3 w-8 h-8 border-b-2 border-r-2 border-amber-800/40 rounded-br-lg pointer-events-none" />
-
-              {/* Top Emblem */}
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-100/80 border border-amber-300/80 text-amber-900 text-xs font-bold mb-4 shadow-2xs">
-                <Sparkles className="w-3.5 h-3.5 text-amber-700" />
-                <span>శ్రీ లక్ష్మీ గణపతి ఫైనాన్స్ • KN FINANCE</span>
+          {/* Real-time Save & Sync Status Banner */}
+          {saveNotification && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`p-3.5 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold transition-all shadow-sm ${saveNotification.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-950 border border-emerald-300'
+                  : saveNotification.type === 'error'
+                    ? 'bg-rose-50 text-rose-950 border border-rose-300'
+                    : 'bg-amber-50 text-amber-950 border border-amber-300'
+                }`}
+            >
+              <div className="flex items-center gap-2.5">
+                {saveNotification.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
+                {saveNotification.type === 'error' && <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+                {saveNotification.type === 'saving' && <RefreshCw className="w-4 h-4 text-amber-600 animate-spin shrink-0" />}
+                <span>{saveNotification.message}</span>
               </div>
+              <button
+                type="button"
+                onClick={() => setSaveNotification(null)}
+                className="p-1 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+                aria-label="Close notification"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
-              {/* Animated Spinner & Primary Title */}
-              <div className="relative my-4 flex flex-col items-center">
-                <div className="relative flex items-center justify-center w-20 h-20">
-                  <div className="absolute inset-0 rounded-full border-4 border-amber-200 border-t-[#166534] animate-spin" />
-                  <BookOpen className="w-8 h-8 text-amber-800" />
-                </div>
-
-                <h3 className="text-xl sm:text-2xl font-extrabold text-amber-950 font-serif mt-5 tracking-wide">
-                  ఖాతా పుస్తకం వివరాలు లోడ్ అవుతున్నాయి...
-                </h3>
-                <p className="text-xs sm:text-sm font-semibold text-amber-800/85 mt-1.5">
-                  Loading Active Finance Book Ledger from Cloud Database
-                </p>
-
-                {/* Elapsed Time Ticker */}
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-200/90 text-amber-900 text-xs font-mono font-bold mt-4">
-                  <Clock className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Elapsed Time: {loadingSeconds}s</span>
-                </div>
-              </div>
-
-              {/* Skeleton Preview of the Book Columns */}
-              <div className="mt-6 mb-6 p-3.5 bg-amber-50/50 rounded-2xl border border-amber-200/60 max-w-lg mx-auto">
-                <div className="flex items-center justify-between text-[11px] font-bold text-amber-900/70 mb-2 px-1">
-                  <span>S.No • Date • Borrower • Installments</span>
-                  <span className="font-mono text-emerald-800 font-semibold">Reading Ledger DB...</span>
-                </div>
-                <div className="space-y-2">
-                  <div className="h-3 bg-amber-200/40 rounded-full animate-pulse w-full" />
-                  <div className="h-3 bg-amber-200/30 rounded-full animate-pulse w-5/6" />
-                  <div className="h-3 bg-amber-200/40 rounded-full animate-pulse w-4/6" />
-                </div>
-              </div>
-
-              {/* LATE DATA NOTIFICATION & OPTIONS (Appears when loadingSeconds >= 3 or on loadError) */}
-              {(loadingSeconds >= 3 || loadError) && (
-                <div className="mt-4 pt-4 border-t border-amber-200/80 animate-in fade-in duration-300">
-                  <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border border-amber-300/80 text-left shadow-xs">
-                    <div className="flex items-start gap-3">
-                      <div className="p-2 bg-amber-200/80 rounded-xl text-amber-800 flex-shrink-0 mt-0.5">
-                        <AlertCircle className="w-5 h-5 text-amber-700" />
+          {/* 2. Outer Desk Frame containing the Open Book Spread */}
+          <div className="screen-only-book print:hidden">
+            {/* Delayed Sync Banner when records are already on screen */}
+            {isSyncingWithBackend && rows.length > 0 && (
+              <div className="no-print mb-4 mx-auto w-full max-w-5xl bg-gradient-to-r from-amber-50 via-amber-100/70 to-amber-50 border border-amber-300 rounded-2xl p-3.5 shadow-sm animate-in fade-in duration-300">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-amber-200/80 rounded-xl text-amber-800 flex-shrink-0 animate-pulse">
+                      <RefreshCw className="w-4 h-4 animate-spin text-amber-700" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-amber-950 text-xs sm:text-sm">
+                          ఖాతా పుస్తకం సింక్ అవుతోంది (Syncing Ledger with Cloud Database)
+                        </span>
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-200/90 text-amber-900">
+                          {loadingSeconds}s
+                        </span>
                       </div>
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <h4 className="text-sm font-bold text-amber-950">
-                            {loadError
-                              ? 'క్లౌడ్ కనెక్షన్ విఫలమైంది (Cloud Connection Delayed)'
-                              : 'డేటా లోడ్ అవ్వడం ఆలస్యం అవుతోంది (Data is taking longer than usual)'}
-                          </h4>
-                          <span className="text-[10px] font-mono font-bold bg-amber-200 px-2 py-0.5 rounded-full text-amber-900">
-                            Slow Response ({loadingSeconds}s)
-                          </span>
-                        </div>
-                        <p className="text-xs text-amber-850 mt-1 leading-relaxed">
-                          {loadError
-                            ? `${loadError} - Cloud database on Render spins down when inactive. Waking it up may take 15–30 seconds.`
-                            : 'The backend cloud database server is waking up from idle sleep mode (Render cold start). You can choose to wait, retry connection, or start working offline immediately.'}
-                        </p>
+                      <p className="text-[11px] text-amber-800 mt-0.5">
+                        {loadingSeconds >= 3
+                          ? 'Server response is taking longer than usual (Render cloud instance waking up from sleep).'
+                          : 'Connecting to database to verify latest entries and payment updates...'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-center">
+                    {loadingSeconds >= 3 && (
+                      <button
+                        onClick={fetchActiveLedger}
+                        className="px-3 py-1.5 text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Retry Sync</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setIsSyncingWithBackend(false)}
+                      className="px-3 py-1.5 text-xs font-bold bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 rounded-xl transition-all"
+                    >
+                      Keep Local Data
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
-                        {/* Interactive Action Buttons */}
-                        <div className="flex flex-wrap items-center gap-2.5 mt-3.5">
-                          <button
-                            type="button"
-                            onClick={fetchActiveLedger}
-                            className="px-3.5 py-2 text-xs font-bold rounded-xl bg-amber-700 hover:bg-amber-800 text-white shadow-xs transition-all flex items-center gap-1.5 active:scale-95"
-                          >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                            <span>Retry Connection (మళ్లీ ప్రయత్నించండి)</span>
-                          </button>
+            <div className="desk-bg bg-[#F2F8E1] border border-[#C5E1A5] shadow-xs flex-1 p-2 md:p-6 lg:p-10 rounded-2xl flex items-start justify-center overflow-x-auto scrollbar-book min-h-[580px]">
+              {isSyncingWithBackend && rows.length === 0 && !isOfflineBypassed ? (
+                /* Dedicated Ledger Loading Container with Late-Data Handling */
+                <div className="max-w-2xl w-full bg-[#fdfbf7] paper-grain rounded-3xl p-6 sm:p-10 border-2 border-[#b45309]/30 shadow-2xl relative overflow-hidden text-center my-6 mx-auto animate-in fade-in zoom-in-95 duration-300">
+                  {/* Decorative Vintage Book Corner Ornaments */}
+                  <div className="absolute top-3 left-3 w-8 h-8 border-t-2 border-l-2 border-amber-800/40 rounded-tl-lg pointer-events-none" />
+                  <div className="absolute top-3 right-3 w-8 h-8 border-t-2 border-r-2 border-amber-800/40 rounded-tr-lg pointer-events-none" />
+                  <div className="absolute bottom-3 left-3 w-8 h-8 border-b-2 border-l-2 border-amber-800/40 rounded-bl-lg pointer-events-none" />
+                  <div className="absolute bottom-3 right-3 w-8 h-8 border-b-2 border-r-2 border-amber-800/40 rounded-br-lg pointer-events-none" />
 
-                          <button
-                            type="button"
-                            onClick={handleStartOffline}
-                            className="px-3.5 py-2 text-xs font-bold rounded-xl bg-[#166534] hover:bg-[#14532d] text-white shadow-xs transition-all flex items-center gap-1.5 active:scale-95"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Start Working Offline (కొత్త ఖాతా ప్రారంభించండి)</span>
-                          </button>
+                  {/* Top Emblem */}
+                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-100/80 border border-amber-300/80 text-amber-900 text-xs font-bold mb-4 shadow-2xs">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                    <span>శ్రీ లక్ష్మీ గణపతి ఫైనాన్స్ • KN FINANCE</span>
+                  </div>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsOfflineBypassed(true);
-                              setIsSyncingWithBackend(false);
-                              onShowToast('Switched to offline view.');
-                            }}
-                            className="px-3 py-2 text-xs font-bold rounded-xl bg-white hover:bg-amber-100/70 text-amber-800 border border-amber-300 shadow-2xs transition-all flex items-center gap-1.5"
-                          >
-                            <WifiOff className="w-3.5 h-3.5" />
-                            <span>Dismiss / Work Offline</span>
-                          </button>
+                  {/* Animated Spinner & Primary Title */}
+                  <div className="relative my-4 flex flex-col items-center">
+                    <div className="relative flex items-center justify-center w-20 h-20">
+                      <div className="absolute inset-0 rounded-full border-4 border-amber-200 border-t-[#166534] animate-spin" />
+                      <BookOpen className="w-8 h-8 text-amber-800" />
+                    </div>
+
+                    <h3 className="text-xl sm:text-2xl font-extrabold text-amber-950 font-serif mt-5 tracking-wide">
+                      ఖాతా పుస్తకం వివరాలు లోడ్ అవుతున్నాయి...
+                    </h3>
+                    <p className="text-xs sm:text-sm font-semibold text-amber-800/85 mt-1.5">
+                      Loading Active Finance Book Ledger from Cloud Database
+                    </p>
+
+                    {/* Elapsed Time Ticker */}
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-200/90 text-amber-900 text-xs font-mono font-bold mt-4">
+                      <Clock className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Elapsed Time: {loadingSeconds}s</span>
+                    </div>
+                  </div>
+
+                  {/* Skeleton Preview of the Book Columns */}
+                  <div className="mt-6 mb-6 p-3.5 bg-amber-50/50 rounded-2xl border border-amber-200/60 max-w-lg mx-auto">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-amber-900/70 mb-2 px-1">
+                      <span>S.No • Date • Borrower • Installments</span>
+                      <span className="font-mono text-emerald-800 font-semibold">Reading Ledger DB...</span>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="h-3 bg-amber-200/40 rounded-full animate-pulse w-full" />
+                      <div className="h-3 bg-amber-200/30 rounded-full animate-pulse w-5/6" />
+                      <div className="h-3 bg-amber-200/40 rounded-full animate-pulse w-4/6" />
+                    </div>
+                  </div>
+
+                  {/* LATE DATA NOTIFICATION & OPTIONS (Appears when loadingSeconds >= 3 or on loadError) */}
+                  {(loadingSeconds >= 3 || loadError) && (
+                    <div className="mt-4 pt-4 border-t border-amber-200/80 animate-in fade-in duration-300">
+                      <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border border-amber-300/80 text-left shadow-xs">
+                        <div className="flex items-start gap-3">
+                          <div className="p-2 bg-amber-200/80 rounded-xl text-amber-800 flex-shrink-0 mt-0.5">
+                            <AlertCircle className="w-5 h-5 text-amber-700" />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <h4 className="text-sm font-bold text-amber-950">
+                                {loadError
+                                  ? 'క్లౌడ్ కనెక్షన్ విఫలమైంది (Cloud Connection Delayed)'
+                                  : 'డేటా లోడ్ అవ్వడం ఆలస్యం అవుతోంది (Data is taking longer than usual)'}
+                              </h4>
+                              <span className="text-[10px] font-mono font-bold bg-amber-200 px-2 py-0.5 rounded-full text-amber-900">
+                                Slow Response ({loadingSeconds}s)
+                              </span>
+                            </div>
+                            <p className="text-xs text-amber-850 mt-1 leading-relaxed">
+                              {loadError
+                                ? `${loadError} - Cloud database on Render spins down when inactive. Waking it up may take 15–30 seconds.`
+                                : 'The backend cloud database server is waking up from idle sleep mode (Render cold start). You can choose to wait, retry connection, or start working offline immediately.'}
+                            </p>
+
+                            {/* Interactive Action Buttons */}
+                            <div className="flex flex-wrap items-center gap-2.5 mt-3.5">
+                              <button
+                                type="button"
+                                onClick={fetchActiveLedger}
+                                className="px-3.5 py-2 text-xs font-bold rounded-xl bg-amber-700 hover:bg-amber-800 text-white shadow-xs transition-all flex items-center gap-1.5 active:scale-95"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                <span>Retry Connection (మళ్లీ ప్రయత్నించండి)</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={handleStartOffline}
+                                className="px-3.5 py-2 text-xs font-bold rounded-xl bg-[#166534] hover:bg-[#14532d] text-white shadow-xs transition-all flex items-center gap-1.5 active:scale-95"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Start Working Offline (కొత్త ఖాతా ప్రారంభించండి)</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsOfflineBypassed(true);
+                                  setIsSyncingWithBackend(false);
+                                  onShowToast('Switched to offline view.');
+                                }}
+                                className="px-3 py-2 text-xs font-bold rounded-xl bg-white hover:bg-amber-100/70 text-amber-800 border border-amber-300 shadow-2xs transition-all flex items-center gap-1.5"
+                              >
+                                <WifiOff className="w-3.5 h-3.5" />
+                                <span>Dismiss / Work Offline</span>
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
+                  )}
+                </div>
+              ) : rows.length === 0 && !isEditing ? (
+                /* Empty Ledger State when sync is done and 0 rows */
+                <div className="max-w-xl w-full bg-[#fdfbf7] paper-grain rounded-3xl p-8 sm:p-10 border-2 border-amber-800/20 shadow-2xl relative text-center my-8 mx-auto animate-in fade-in duration-300">
+                  <div className="w-16 h-16 rounded-2xl bg-amber-100 flex items-center justify-center mx-auto mb-4 text-amber-800 shadow-inner">
+                    <BookOpen className="w-8 h-8" />
                   </div>
+                  <h3 className="text-xl font-extrabold text-amber-950 font-serif">
+                    ఖాతా పుస్తకంలో రికార్డులు లేవు
+                  </h3>
+                  <p className="text-xs sm:text-sm text-amber-800/80 font-medium mt-1.5 max-w-md mx-auto">
+                    No active ledger accounts found. You can add the first borrower account row or synchronize with the cloud database.
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
+                    <button
+                      type="button"
+                      onClick={handleStartOffline}
+                      className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-[#166534] hover:from-emerald-700 hover:to-[#14532d] text-white shadow-md transition-all flex items-center gap-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>కొత్త ఖాతా ప్రారంభించండి (Add First Person)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={fetchActiveLedger}
+                      className="px-4 py-2.5 text-xs font-bold rounded-xl bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 shadow-xs transition-all flex items-center gap-2"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      <span>Sync from Cloud (క్లౌడ్ నుండి పొందండి)</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Book Spread Inner Content */
+                <div
+                  className="book-spread book-stacked-shadow paper-grain flex flex-row select-none relative overflow-hidden transition-all duration-300 mx-auto"
+                  style={{ width: `${bookSpreadWidth}px`, minWidth: `${bookSpreadWidth}px` }}
+                >
+
+
+                  {/* ========================================================
+              LEFT PAGE SPREAD (S.No, Borrow Date, Telugu Name, English Name, Product, Amount, Installments)
+             ======================================================== */}
+                  <div
+                    className="left-page-curl paper-grain pt-4 pb-6 pl-4 pr-0 relative z-10 flex flex-col items-end"
+                    style={{ width: `${leftPageWidth}px` }}
+                  >
+
+                    <table className="ledger-table w-full table-fixed border-collapse select-text telugu-font">
+                      <thead className="bg-[#b45309]/5">
+                        {/* Headers Row */}
+                        <tr className="double-header-border text-slate-900 font-bold text-center h-[54px] select-none text-[11px] leading-tight">
+                          <th className="ledger-cell-border w-[38px] select-none font-bold align-middle">
+                            వ.సం.<br /><span className="text-[9px] text-slate-500 font-sans font-bold">S.No.</span>
+                          </th>
+                          <th className="ledger-cell-border w-[70px] select-none font-bold align-middle">
+                            తేది<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Borrow Date</span>
+                          </th>
+                          {/* Separate Telugu Name Column */}
+                          <th className="ledger-cell-border w-[130px] select-none font-bold align-middle">
+                            ఆసామి పేరు (తెలుగు)<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Telugu Name</span>
+                          </th>
+                          {/* Separate English Name Column */}
+                          <th className="ledger-cell-border w-[130px] select-none font-bold align-middle">
+                            పేరు (English)<br /><span className="text-[9px] text-slate-500 font-sans font-bold">English Name</span>
+                          </th>
+                          <th className="ledger-cell-border w-[90px] select-none font-bold align-middle">
+                            వస్తువు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Product</span>
+                          </th>
+                          <th className="ledger-cell-border w-[75px] select-none font-bold align-middle">
+                            సొమ్ము<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Amount</span>
+                          </th>
+                          {/* Left side dynamic installment columns */}
+                          {Array.from({ length: leftPageCount }).map((_, dIdx) => (
+                            <th key={dIdx} className={`ledger-cell-border w-[88px] p-0 align-middle ${dIdx === leftPageCount - 1 ? 'border-r-0' : ''}`}>
+                              <div className="relative flex flex-col items-center justify-center h-full px-1 py-1 select-none">
+                                <span className="text-[10px] text-amber-950 font-bold leading-tight">
+                                  వాయిదా {dIdx + 1}
+                                </span>
+
+                                <span className="text-[8.5px] text-amber-800/80 font-sans font-bold tracking-tight">
+                                  తేది | సొమ్ము
+                                </span>
+                                {isEditing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteColumn(dIdx)}
+                                    className="absolute -top-1.5 right-0.5 text-[10px] text-red-500 hover:text-red-700 bg-white/95 rounded-full w-4 h-4 flex items-center justify-center shadow border border-red-200 no-print"
+                                    title="Delete Column"
+                                  >
+                                    ×
+                                  </button>
+                                )}
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={6 + leftPageCount} className="ledger-cell-border p-8 text-center text-amber-900/60 font-medium text-xs">
+                              {searchTerm ? `"${searchTerm}" కి సంబంధించి ఎటువంటి రికార్డులు కనుగొనబడలేదు` : 'ఈ ఖాతా పుస్తకంలో రికార్డులు ఏవీ లేవు'}
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredRows.map((row, rIdx) => (
+                            <tr key={row.id} className={`h-[48px] hover:bg-slate-500/5 transition-colors ${row.isClosed ? 'bg-slate-100/55 opacity-90' : ''}`}>
+                              {/* SNo cell */}
+                              <td className="ledger-cell-border p-0 text-center font-sans">
+                                <input
+                                  type="text"
+                                  disabled={!isEditing}
+                                  value={row.sNo}
+                                  data-row={rIdx}
+                                  data-col={1}
+                                  onChange={(e) => handleCellChange(row.id, 'sNo', e.target.value)}
+                                  onKeyDown={(e) => handleKeyDown(e, rIdx, 1)}
+                                  onFocus={() => setActiveCell({ row: rIdx, col: 1 })}
+                                  className={`ledger-cell-input text-center font-bold text-slate-800 ${row.isClosed ? 'closed-row-input' : ''}`}
+                                />
+                              </td>
+
+                              {/* Borrow Date cell */}
+                              <td className="ledger-cell-border p-0 text-center font-sans">
+                                <input
+                                  type="text"
+                                  disabled={!isEditing}
+                                  value={row.date}
+                                  data-row={rIdx}
+                                  data-col={0}
+                                  onChange={(e) => handleCellChange(row.id, 'date', e.target.value)}
+                                  onKeyDown={(e) => handleKeyDown(e, rIdx, 0)}
+                                  onFocus={() => setActiveCell({ row: rIdx, col: 0 })}
+                                  className={`ledger-cell-input text-center ${row.isClosed ? 'closed-row-input' : ''}`}
+                                  placeholder="DD-MM"
+                                />
+                              </td>
+
+                              {/* Separate Telugu Name cell */}
+                              <td className="ledger-cell-border p-0 text-left telugu-font">
+                                <div className="flex items-center w-full h-full relative">
+                                  {isEditing && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteRow(row.id)}
+                                      className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded no-print ml-1 flex-shrink-0"
+                                      title="Delete Person"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  <input
+                                    type="text"
+                                    disabled={!isEditing}
+                                    value={row.nameTelugu || ''}
+                                    data-row={rIdx}
+                                    data-col={2}
+                                    onChange={(e) => handleNameChange(row.id, 'telugu', e.target.value)}
+                                    onKeyDown={(e) => handleKeyDown(e, rIdx, 2)}
+                                    onFocus={() => setActiveCell({ row: rIdx, col: 2 })}
+                                    className={`ledger-cell-input text-left px-2 font-semibold ${row.isClosed ? 'closed-row-input' : ''}`}
+                                    placeholder="తెలుగు పేరు"
+                                  />
+                                </div>
+                              </td>
+
+                              {/* Separate English Name cell */}
+                              <td className="ledger-cell-border p-0 text-left font-sans">
+                                <input
+                                  type="text"
+                                  disabled={!isEditing}
+                                  value={row.nameEnglish || ''}
+                                  data-row={rIdx}
+                                  data-col={3}
+                                  onChange={(e) => handleNameChange(row.id, 'english', e.target.value)}
+                                  onKeyDown={(e) => handleKeyDown(e, rIdx, 3)}
+                                  onFocus={() => setActiveCell({ row: rIdx, col: 3 })}
+                                  className={`ledger-cell-input text-left px-2 text-xs font-semibold text-slate-700 ${row.isClosed ? 'closed-row-input' : ''}`}
+                                  placeholder="English Name"
+                                />
+                              </td>
+
+                              {/* Item Details cell */}
+                              <td className="ledger-cell-border p-0 text-left">
+                                <input
+                                  type="text"
+                                  disabled={!isEditing}
+                                  value={row.item}
+                                  data-row={rIdx}
+                                  data-col={4}
+                                  onChange={(e) => handleCellChange(row.id, 'item', e.target.value)}
+                                  onKeyDown={(e) => handleKeyDown(e, rIdx, 4)}
+                                  onFocus={() => setActiveCell({ row: rIdx, col: 4 })}
+                                  className={`ledger-cell-input text-left px-2 text-xs text-slate-600 ${row.isClosed ? 'closed-row-input' : ''}`}
+                                  placeholder=""
+                                />
+                              </td>
+
+                              {/* Amount cell */}
+                              <td className="ledger-cell-border p-0 text-right font-sans">
+                                <input
+                                  type="text"
+                                  disabled={!isEditing}
+                                  value={row.amount}
+                                  data-row={rIdx}
+                                  data-col={5}
+                                  onChange={(e) => handleCellChange(row.id, 'amount', e.target.value)}
+                                  onKeyDown={(e) => handleKeyDown(e, rIdx, 5)}
+                                  onFocus={() => setActiveCell({ row: rIdx, col: 5 })}
+                                  className={`ledger-cell-input text-right px-1.5 font-bold text-[#166534] ${row.isClosed ? 'closed-row-input' : ''}`}
+                                  placeholder=""
+                                />
+                              </td>
+
+                              {/* Date + Amount Installment cells index 0 to leftPageCount - 1 */}
+                              {Array.from({ length: leftPageCount }).map((_, dIdx) => {
+                                const pay = getPayment(row, dIdx);
+                                return (
+                                  <td key={dIdx} className={`ledger-cell-border p-0 text-center font-sans bg-amber-50/10 ${dIdx === leftPageCount - 1 ? 'border-r-0' : ''}`}>
+                                    {isEditing ? (
+                                      <div className="flex flex-col h-full w-full justify-center">
+                                        {/* Top Date Input */}
+                                        <input
+                                          type="text"
+                                          value={pay.date}
+                                          placeholder="DD-MM"
+                                          onChange={(e) => handlePaymentChange(row.id, dIdx, 'date', e.target.value)}
+                                          className="w-full text-center text-[10px] font-semibold text-amber-900 bg-amber-50/40 border-b border-amber-200/60 focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
+                                          title="Payment Date (DD-MM)"
+                                        />
+                                        {/* Bottom Amount Input */}
+                                        <input
+                                          type="text"
+                                          value={pay.amount}
+                                          placeholder="₹ సొమ్ము"
+                                          onChange={(e) => handlePaymentChange(row.id, dIdx, 'amount', e.target.value)}
+                                          className="w-full text-center text-[11px] font-bold text-slate-800 bg-transparent focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
+                                          title="Payment Amount"
+                                        />
+                                      </div>
+                                    ) : (
+                                      <div className={`flex flex-col items-center justify-center h-full py-0.5 leading-tight select-text ${row.isClosed ? 'closed-row-input' : ''}`}>
+                                        {pay.amount || pay.date ? (
+                                          <>
+                                            <span className="text-[10px] text-amber-900/80 font-bold font-sans tracking-tight">
+                                              {pay.date || '—'}
+                                            </span>
+                                            <span className="text-[12px] font-bold text-[#166534] font-sans">
+                                              {pay.amount ? `₹${pay.amount}` : '—'}
+                                            </span>
+                                          </>
+                                        ) : (
+                                          <span className="text-slate-300 font-sans text-xs">—</span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          )))}
+
+                        {/* Bottom Add Person Button Row */}
+                        {isEditing && (
+                          <tr className="no-print h-[38px] bg-[#b45309]/5">
+                            <td colSpan={6 + leftPageCount} className="ledger-cell-border border-r-0 p-1.5 text-center">
+                              <button
+                                onClick={handleAddRow}
+                                className="px-4 py-1.5 text-xs bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 border border-teal-800 text-white rounded-lg font-bold transition-all shadow-md hover:scale-[1.02] active:scale-[0.98] leading-none"
+                              >
+                                ➕ Add Person Row
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                      <tfoot className="bg-[#b45309]/10">
+                        <tr className="double-footer-border h-[48px] select-none text-slate-900 font-bold">
+                          {/* S.No, Date, Telugu Name, English Name, Item details */}
+                          <td colSpan={5} className="ledger-cell-border p-2 text-center align-middle bg-amber-100/40">
+                            <div className="flex items-center justify-center gap-1.5 font-bold text-amber-950 text-xs">
+                              <span className="telugu-font font-extrabold text-[12px]">మొత్తం</span>
+                              <span className="text-[10px] text-amber-800 font-sans tracking-wide font-extrabold">(TOTAL)</span>
+                            </div>
+                          </td>
+
+                          {/* Calculation 1: Total Principal Amount (సొమ్ము) */}
+                          <td className="ledger-cell-border p-1.5 text-right font-sans font-extrabold text-[12px] text-[#166534] bg-emerald-50/50 align-middle">
+                            ₹{totalPrincipal.toLocaleString('en-IN')}
+                          </td>
+
+                          {/* Calculation 2: Dynamic Installment Columns on Left Page */}
+                          {Array.from({ length: leftPageCount }).map((_, dIdx) => (
+                            <td key={dIdx} className={`ledger-cell-border p-1 text-center font-sans font-bold text-[12px] bg-amber-50/40 text-amber-950 align-middle ${dIdx === leftPageCount - 1 ? 'border-r-0' : ''}`}>
+                              {colSums[dIdx] > 0 ? (
+                                <span className="text-[#166534] font-extrabold font-sans">
+                                  ₹{colSums[dIdx].toLocaleString('en-IN')}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 font-sans text-xs">₹0</span>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  {/* ========================================================
+              RIGHT PAGE SPREAD (Continuation of Installment Columns, Totals)
+             ======================================================== */}
+                  <div
+                    className="right-page-curl paper-grain pt-4 pb-6 pl-0 pr-4 relative z-10 flex flex-col items-start overflow-x-auto scrollbar-book"
+                    style={{ width: `${rightPageWidth}px` }}
+                  >
+
+                    <table className="ledger-table w-full table-fixed border-collapse select-text">
+                      <thead className="bg-[#b45309]/5">
+                        {/* Headers Row */}
+                        <tr className="double-header-border text-slate-900 font-bold text-center h-[54px] select-none text-[11px] leading-tight">
+                          {/* Right side dynamic installment columns */}
+                          {Array.from({ length: rightPageCount }).map((_, i) => {
+                            const dIdx = i + leftPageCount;
+                            return (
+                              <th key={dIdx} className={`ledger-cell-border w-[88px] p-0 align-middle ${i === 0 ? 'border-l-0' : ''}`}>
+                                <div className="relative flex flex-col items-center justify-center h-full px-1 py-1 select-none">
+                                  <span className="text-[10px] text-amber-950 font-bold leading-tight">
+                                    వాయిదా {dIdx + 1}
+                                  </span>
+                                  <span className="text-[8.5px] text-amber-800/80 font-sans font-bold tracking-tight">
+                                    తేది | సొమ్ము
+                                  </span>
+                                  {isEditing && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteColumn(dIdx)}
+                                      className="absolute -top-1.5 right-0.5 text-[10px] text-red-500 hover:text-red-700 bg-white/95 rounded-full w-4 h-4 flex items-center justify-center shadow border border-red-200 no-print"
+                                      title="Delete Column"
+                                    >
+                                      ×
+                                    </button>
+                                  )}
+                                </div>
+                              </th>
+                            );
+                          })}
+
+                          {/* Summary columns */}
+                          <th className="ledger-cell-border w-[100px] select-none font-bold align-middle">
+                            మొత్తం వసూలు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Total Paid</span>
+                          </th>
+                          <th className="ledger-cell-border w-[100px] select-none font-bold align-middle">
+                            బాకీ సొమ్ము<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Remaining</span>
+                          </th>
+                          <th className="ledger-cell-border w-[80px] select-none font-bold align-middle">
+                            ముగింపు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Status</span>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={rightPageCount + 3} className="ledger-cell-border p-8 text-center text-amber-900/60 font-medium text-xs">
+                              —
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredRows.map((row, rIdx) => {
+                            const { totalPaid, target, amount } = getRowTotals(row);
+                            return (
+                              <tr key={row.id} className={`h-[48px] hover:bg-slate-500/5 transition-colors ${row.isClosed ? 'bg-slate-100/55 opacity-90' : ''}`}>
+
+                                {/* Date + Amount Installment cells index leftPageCount to end */}
+                                {Array.from({ length: rightPageCount }).map((_, i) => {
+                                  const dIdx = i + leftPageCount;
+                                  const pay = getPayment(row, dIdx);
+                                  return (
+                                    <td key={dIdx} className={`ledger-cell-border p-0 text-center font-sans bg-amber-50/10 ${i === 0 ? 'border-l-0' : ''}`}>
+                                      {isEditing ? (
+                                        <div className="flex flex-col h-full w-full justify-center">
+                                          {/* Top Date Input */}
+                                          <input
+                                            type="text"
+                                            value={pay.date}
+                                            placeholder="DD-MM"
+                                            onChange={(e) => handlePaymentChange(row.id, dIdx, 'date', e.target.value)}
+                                            className="w-full text-center text-[10px] font-semibold text-amber-900 bg-amber-50/40 border-b border-amber-200/60 focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
+                                            title="Payment Date (DD-MM)"
+                                          />
+                                          {/* Bottom Amount Input */}
+                                          <input
+                                            type="text"
+                                            value={pay.amount}
+                                            placeholder="₹ సొమ్ము"
+                                            onChange={(e) => handlePaymentChange(row.id, dIdx, 'amount', e.target.value)}
+                                            className="w-full text-center text-[11px] font-bold text-slate-800 bg-transparent focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
+                                            title="Payment Amount"
+                                          />
+                                        </div>
+                                      ) : (
+                                        <div className={`flex flex-col items-center justify-center h-full py-0.5 leading-tight select-text ${row.isClosed ? 'closed-row-input' : ''}`}>
+                                          {pay.amount || pay.date ? (
+                                            <>
+                                              <span className="text-[10px] text-amber-900/80 font-bold font-sans tracking-tight">
+                                                {pay.date || '—'}
+                                              </span>
+                                              <span className="text-[12px] font-bold text-[#166534] font-sans">
+                                                {pay.amount ? `₹${pay.amount}` : '—'}
+                                              </span>
+                                            </>
+                                          ) : (
+                                            <span className="text-slate-300 font-sans text-xs">—</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+
+                                {/* Total Paid Column */}
+                                <td className={`ledger-cell-border p-1 text-center font-sans font-extrabold text-[#059669] bg-emerald-50/20 ${row.isClosed ? 'line-through text-slate-400 opacity-60' : ''}`}>
+                                  {row.amount ? totalPaid || '0' : ''}
+                                </td>
+
+                                {/* Remaining Balance Column */}
+                                <td className={`ledger-cell-border p-0 text-center font-sans transition-colors ${(target - totalPaid) <= 0 && totalPaid > 0
+                                  ? 'bg-emerald-100/40 text-emerald-800 font-extrabold'
+                                  : 'bg-amber-50/10'
+                                  }`}>
+                                  <div className="relative flex items-center justify-center h-full w-full">
+                                    <input
+                                      type="text"
+                                      disabled={!isEditing}
+                                      value={
+                                        activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length
+                                          ? (row.initialRemaining !== undefined ? row.initialRemaining : (row.amount ? row.amount : ''))
+                                          : (row.amount ? (target - totalPaid).toString() : '')
+                                      }
+                                      data-row={rIdx}
+                                      data-col={6 + currentDateColumns.length}
+                                      onChange={(e) => handleCellChange(row.id, 'initialRemaining', e.target.value)}
+                                      onKeyDown={(e) => handleKeyDown(e, rIdx, 6 + currentDateColumns.length)}
+                                      onFocus={() => setActiveCell({ row: rIdx, col: 6 + currentDateColumns.length })}
+                                      onBlur={() => {
+                                        // Small timeout so click on "+5%" badge registers before activeCell resets to null
+                                        setTimeout(() => setActiveCell(null), 150);
+                                      }}
+                                      className={`ledger-cell-input text-center text-xs font-extrabold ${(activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length) ? 'pr-8' : ''
+                                        } ${(target - totalPaid) <= 0 && totalPaid > 0
+                                          ? 'text-emerald-700 font-extrabold'
+                                          : 'text-amber-900'
+                                        } ${row.isClosed ? 'closed-row-input' : ''}`}
+                                      placeholder={row.amount ? (amount - totalPaid).toString() : ''}
+                                    />
+                                    {isEditing && activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          e.preventDefault();
+                                          const currentVal = parseFloat(row.initialRemaining || row.amount || '0') || 0;
+                                          const newVal = Math.round(currentVal * 1.05);
+                                          handleCellChange(row.id, 'initialRemaining', newVal.toString());
+                                        }}
+                                        className="absolute right-1 px-1 py-0.5 text-[9px] bg-amber-600 text-white rounded hover:bg-amber-700 font-sans font-bold no-print"
+                                        title="Add 5% Interest"
+                                      >
+                                        +5%
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* Status Column (Closed Action) */}
+                                <td className="ledger-cell-border p-1 text-center font-sans">
+                                  {isEditing ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleClosed(row.id)}
+                                      className={`px-2 py-0.5 text-[10px] font-bold rounded shadow transition-all ${row.isClosed
+                                        ? 'bg-red-100 text-red-700 border border-red-200 hover:bg-red-200'
+                                        : 'bg-emerald-100 text-emerald-700 border border-emerald-200 hover:bg-emerald-200'
+                                        }`}
+                                    >
+                                      {row.isClosed ? 'Reopen' : 'Close'}
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className={`inline-block py-0.5 px-2 rounded-full text-[9px] font-extrabold uppercase tracking-wider ${row.isClosed
+                                        ? 'bg-red-100 text-red-800 border border-red-200'
+                                        : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                        }`}
+                                    >
+                                      {row.isClosed ? 'Closed' : 'Active'}
+                                    </span>
+                                  )}
+                                </td>
+
+                              </tr>
+                            );
+                          })
+                        )}
+
+                        {/* Bottom Add Column Button Row */}
+                        {isEditing && (
+                          <tr className="no-print h-[38px] bg-[#b45309]/5">
+                            <td colSpan={rightPageCount + 3} className="ledger-cell-border border-l-0 p-1.5 text-center">
+                              <button
+                                onClick={handleAddColumn}
+                                className="px-4 py-1.5 text-xs bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 border border-amber-800 text-white rounded-lg font-bold transition-all shadow-md hover:scale-[1.02] active:scale-[0.98] leading-none"
+                              >
+                                ➕ Add Date Column
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                      <tfoot className="bg-[#b45309]/10">
+                        <tr className="double-footer-border h-[48px] select-none text-slate-900 font-bold">
+                          {/* Calculation 2: Dynamic Installment Columns on Right Page */}
+                          {Array.from({ length: rightPageCount }).map((_, i) => {
+                            const dIdx = i + leftPageCount;
+                            return (
+                              <td key={dIdx} className={`ledger-cell-border p-1 text-center font-sans font-bold text-[12px] bg-amber-50/40 text-amber-950 align-middle ${i === 0 ? 'border-l-0' : ''}`}>
+                                {colSums[dIdx] > 0 ? (
+                                  <span className="text-[#166534] font-extrabold font-sans">
+                                    ₹{colSums[dIdx].toLocaleString('en-IN')}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 font-sans text-xs">₹0</span>
+                                )}
+                              </td>
+                            );
+                          })}
+
+                          {/* Calculation 3: Total Paid (మొత్తం వసూలు) */}
+                          <td className="ledger-cell-border p-1 text-center font-sans font-extrabold text-[13px] text-[#059669] bg-emerald-100/50 align-middle">
+                            ₹{totalPaidAll.toLocaleString('en-IN')}
+                          </td>
+
+                          {/* Calculation 4: Remaining (బాకీ సొమ్ము) */}
+                          <td className="ledger-cell-border p-1 text-center font-sans font-extrabold text-[13px] text-amber-950 bg-amber-100/40 align-middle">
+                            ₹{totalRemainingAll.toLocaleString('en-IN')}
+                          </td>
+
+                          {/* Status Column Summary */}
+                          <td className="ledger-cell-border p-1 text-center font-sans text-[10px] font-bold text-slate-700 bg-slate-100/60 align-middle">
+                            <div className="flex flex-col items-center justify-center leading-tight">
+                              <span className="text-[#166534] font-extrabold">{filteredRows.filter(r => !r.isClosed).length} Act</span>
+                              <span className="text-slate-400 text-[9px]">{filteredRows.length} Total</span>
+                            </div>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+
                 </div>
               )}
             </div>
-          ) : rows.length === 0 && !isEditing ? (
-            /* Empty Ledger State when sync is done and 0 rows */
-            <div className="max-w-xl w-full bg-[#fdfbf7] paper-grain rounded-3xl p-8 sm:p-10 border-2 border-amber-800/20 shadow-2xl relative text-center my-8 mx-auto animate-in fade-in duration-300">
-              <div className="w-16 h-16 rounded-2xl bg-amber-100 flex items-center justify-center mx-auto mb-4 text-amber-800 shadow-inner">
-                <BookOpen className="w-8 h-8" />
-              </div>
-              <h3 className="text-xl font-extrabold text-amber-950 font-serif">
-                ఖాతా పుస్తకంలో రికార్డులు లేవు
-              </h3>
-              <p className="text-xs sm:text-sm text-amber-800/80 font-medium mt-1.5 max-w-md mx-auto">
-                No active ledger accounts found. You can add the first borrower account row or synchronize with the cloud database.
-              </p>
-              <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
-                <button
-                  type="button"
-                  onClick={handleStartOffline}
-                  className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-[#166534] hover:from-emerald-700 hover:to-[#14532d] text-white shadow-md transition-all flex items-center gap-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>కొత్త ఖాతా ప్రారంభించండి (Add First Person)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={fetchActiveLedger}
-                  className="px-4 py-2.5 text-xs font-bold rounded-xl bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 shadow-xs transition-all flex items-center gap-2"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  <span>Sync from Cloud (క్లౌడ్ నుండి పొందండి)</span>
-                </button>
+          </div>
+        </>
+      )}
+
+      {/* 2. Dedicated Remaining Balances, Calculations & PDF Reports Section */}
+      {activeFinanceSection === 'remaining_exports' && (
+        <div className="no-print space-y-6 animate-in fade-in duration-300">
+          {/* Header & Quick Export Station */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#E8F5C8] border border-[#C5E1A5] shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#166534] text-[#D4A017] flex items-center justify-center shadow-xs">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-[#0F172A] flex items-center gap-2">
+                    బాకీల నివేదిక & ఆర్థిక లెక్కలు (Remaining Balances & Financial Reports)
+                  </h2>
+                  <p className="text-xs text-[#166534] font-semibold mt-0.5">
+                    సమగ్ర రికవరీ గణాంకాలు, రుణ వాయిదా కాలిక్యులేటర్ మరియు హై-డెఫినిషన్ ప్రింట్ PDF ఎగుమతి
+                  </p>
+                </div>
               </div>
             </div>
-          ) : (
-            /* Book Spread Inner Content */
-            <div
-              className="book-spread book-stacked-shadow paper-grain flex flex-row select-none relative overflow-hidden transition-all duration-300 mx-auto"
-              style={{ width: `${bookSpreadWidth}px`, minWidth: `${bookSpreadWidth}px` }}
-            >
 
+            {/* Action Buttons Station */}
+            <div className="flex items-center flex-wrap sm:flex-nowrap gap-2 sm:gap-2.5">
+              {/* Back to Interactive Ledger Book */}
+              <button
+                type="button"
+                onClick={() => setActiveFinanceSection('ledger')}
+                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-[#166534] hover:bg-[#14532d] text-white shadow-xs transition-all cursor-pointer whitespace-nowrap"
+                title="Back to Ledger Book"
+              >
+                <BookOpen className="w-4 h-4 text-[#D4A017]" />
+                <span>లెడ్జర్ బుక్ (Back to Ledger)</span>
+              </button>
 
-            {/* ========================================================
-              LEFT PAGE SPREAD (S.No, Borrow Date, Telugu Name, English Name, Product, Amount, Installments)
-             ======================================================== */}
-            <div
-              className="left-page-curl paper-grain pt-4 pb-6 pl-4 pr-0 relative z-10 flex flex-col items-end"
-              style={{ width: `${leftPageWidth}px` }}
-            >
+              <button
+                type="button"
+                onClick={fetchActiveLedger}
+                disabled={isSyncingWithBackend}
+                className="h-10 px-3.5 inline-flex items-center justify-center gap-1.5 text-xs font-bold rounded-xl bg-white hover:bg-[#E2F0C2] text-[#166534] border border-[#C5E1A5] transition-all cursor-pointer shadow-xs"
+                title="Sync with cloud backend"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingWithBackend ? 'animate-spin text-[#166534]' : 'text-[#166534]'}`} />
+                <span>{isSyncingWithBackend ? 'Syncing...' : lastSyncTime ? `Synced ${lastSyncTime}` : 'Sync DB'}</span>
+              </button>
 
-              <table className="ledger-table w-full table-fixed border-collapse select-text telugu-font">
-                <thead className="bg-[#b45309]/5">
-                  {/* Headers Row */}
-                  <tr className="double-header-border text-slate-900 font-bold text-center h-[54px] select-none text-[11px] leading-tight">
-                    <th className="ledger-cell-border w-[38px] select-none font-bold align-middle">
-                      వ.సం.<br /><span className="text-[9px] text-slate-500 font-sans font-bold">S.No.</span>
-                    </th>
-                    <th className="ledger-cell-border w-[70px] select-none font-bold align-middle">
-                      తేది<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Borrow Date</span>
-                    </th>
-                    {/* Separate Telugu Name Column */}
-                    <th className="ledger-cell-border w-[130px] select-none font-bold align-middle">
-                      ఆసామి పేరు (తెలుగు)<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Telugu Name</span>
-                    </th>
-                    {/* Separate English Name Column */}
-                    <th className="ledger-cell-border w-[130px] select-none font-bold align-middle">
-                      పేరు (English)<br /><span className="text-[9px] text-slate-500 font-sans font-bold">English Name</span>
-                    </th>
-                    <th className="ledger-cell-border w-[90px] select-none font-bold align-middle">
-                      వస్తువు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Product</span>
-                    </th>
-                    <th className="ledger-cell-border w-[75px] select-none font-bold align-middle">
-                      సొమ్ము<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Amount</span>
-                    </th>
-                    {/* Left side dynamic installment columns */}
-                    {Array.from({ length: leftPageCount }).map((_, dIdx) => (
-                      <th key={dIdx} className={`ledger-cell-border w-[88px] p-0 align-middle ${dIdx === leftPageCount - 1 ? 'border-r-0' : ''}`}>
-                        <div className="relative flex flex-col items-center justify-center h-full px-1 py-1 select-none">
-                          <span className="text-[10px] text-amber-950 font-bold leading-tight">
-                            వాయిదా {dIdx + 1}
-                          </span>
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-white hover:bg-[#E2F0C2] text-[#166534] border border-[#C5E1A5] shadow-xs transition-all cursor-pointer"
+                title="Download Excel Sheet (.xlsx)"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-[#166534]" />
+                <span>ఎక్సెల్ షీట్ (.xlsx)</span>
+              </button>
 
-                          <span className="text-[8.5px] text-amber-800/80 font-sans font-bold tracking-tight">
-                            తేది | సొమ్ము
-                          </span>
-                          {isEditing && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteColumn(dIdx)}
-                              className="absolute -top-1.5 right-0.5 text-[10px] text-red-500 hover:text-red-700 bg-white/95 rounded-full w-4 h-4 flex items-center justify-center shadow border border-red-200 no-print"
-                              title="Delete Column"
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
-                      </th>
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-bold rounded-xl bg-white hover:bg-[#E2F0C2] text-[#166534] border border-[#C5E1A5] shadow-xs transition-all cursor-pointer"
+                title="Download CSV"
+              >
+                <Download className="w-4 h-4 text-[#166534]" />
+                <span>CSV ఎగుమతి</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePrint}
+                className="h-10 px-5 inline-flex items-center justify-center gap-2 text-xs font-extrabold rounded-xl bg-[#166534] hover:bg-[#14532d] text-white shadow-md transition-all cursor-pointer transform hover:scale-[1.01]"
+                title="Print Official Ledger Format (PDF)"
+              >
+                <Printer className="w-4 h-4 text-[#D4A017]" />
+                <span>ప్రింట్ / PDF ఎగుమతి (Print PDF)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 4 Financial KPI Summary Calculation Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* 1. Total Principal Disbursed */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs hover:border-[#166534] transition-all">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold text-[#166534] uppercase tracking-wider">
+                  మొత్తం అసలు / పెట్టుబడి
+                </span>
+                <div className="p-2 rounded-xl bg-[#E8F5C8] text-[#166534]">
+                  <IndianRupee className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black text-[#0F172A] font-mono">
+                ₹{totalPrincipal.toLocaleString('en-IN')}
+              </div>
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-medium">
+                <span>మొత్తం ఖాతాదారులు:</span>
+                <span className="font-bold text-[#0F172A]">{filteredRows.length} ఆసాములు</span>
+              </div>
+            </div>
+
+            {/* 2. Total Paid / Collected */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs hover:border-[#166534] transition-all">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">
+                  మొత్తం వసూలైన సొమ్ము
+                </span>
+                <div className="p-2 rounded-xl bg-emerald-100 text-emerald-800">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black text-emerald-700 font-mono">
+                ₹{totalPaidAll.toLocaleString('en-IN')}
+              </div>
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-medium">
+                <span>వాయిదా కాలమ్స్:</span>
+                <span className="font-bold text-emerald-700">{currentDateColumns.length} వారాలు</span>
+              </div>
+            </div>
+
+            {/* 3. Total Remaining Due */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-white border border-amber-300 shadow-xs hover:border-amber-400 transition-all bg-gradient-to-br from-white via-white to-amber-50/40">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold text-amber-900 uppercase tracking-wider">
+                  నికర మిగిలిన బాకీ
+                </span>
+                <div className="p-2 rounded-xl bg-amber-100 text-amber-800">
+                  <AlertCircle className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black text-amber-900 font-mono">
+                ₹{totalRemainingAll.toLocaleString('en-IN')}
+              </div>
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-amber-100 text-[11px] text-slate-500 font-medium">
+                <span>బాకీ ఉన్న ఖాతాలు:</span>
+                <span className="font-bold text-amber-900">
+                  {filteredRows.filter((r) => !r.isClosed && getRowTotals(r).remaining > 0).length} పెండింగ్
+                </span>
+              </div>
+            </div>
+
+            {/* 4. Overall Recovery Rate */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs hover:border-[#166534] transition-all">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold text-[#166534] uppercase tracking-wider">
+                  రికవరీ శాతం (Recovery %)
+                </span>
+                <div className="p-2 rounded-xl bg-[#E8F5C8] text-[#166534]">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black text-[#166534] font-mono">
+                {overallRecoveryRate}%
+              </div>
+              <div className="mt-2 pt-2 border-t border-slate-100 space-y-1.5">
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                  <div
+                    className="bg-[#166534] h-full rounded-full transition-all duration-500"
+                    style={{ width: `${overallRecoveryRate}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] text-slate-500 font-medium">
+                  <span>వసూలు: {overallRecoveryRate}%</span>
+                  <span>బాకీ: {100 - overallRecoveryRate}%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Financial Calculation & Analytics Section: 2 Columns */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Column 1: Interactive Loan & Interest Weekly Calculator (5 cols) */}
+            <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-[#C5E1A5] shadow-xs flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-xl bg-[#E8F5C8] text-[#166534]">
+                      <Calculator className="w-4 h-4" />
+                    </div>
+                    <h3 className="text-sm font-bold text-[#0F172A]">
+                      రుణం & వడ్డీ లెక్కల కాలిక్యులేటర్
+                    </h3>
+                  </div>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#E8F5C8] text-[#166534] font-bold">
+                    లైవ్ లెక్కలు
+                  </span>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="mb-4">
+                  <label className="text-[11px] font-bold text-slate-500 block mb-1.5">
+                    సొమ్ము శీఘ్ర ఎంపిక (Quick Presets):
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[5000, 10000, 20000, 50000, 100000].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setCalcPrincipal(preset)}
+                        className={`px-2.5 py-1 text-[11px] font-mono font-bold rounded-lg border transition-all cursor-pointer ${calcPrincipal === preset
+                            ? 'bg-[#166534] text-white border-[#166534]'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-[#E2F0C2]'
+                          }`}
+                      >
+                        ₹{preset.toLocaleString('en-IN')}
+                      </button>
                     ))}
+                  </div>
+                </div>
+
+                {/* Input Fields */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">
+                      అసలు సొమ్ము (Principal Amount ₹)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">₹</span>
+                      <input
+                        type="number"
+                        min="0"
+                        value={calcPrincipal}
+                        onChange={(e) => setCalcPrincipal(Math.max(0, Number(e.target.value) || 0))}
+                        className="w-full h-10 pl-8 pr-3 text-sm font-mono font-bold rounded-xl border border-[#C5E1A5] bg-[#F2F8E1]/30 focus:bg-white focus:border-[#166534] focus:ring-2 focus:ring-[#166534]/15 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 block mb-1">
+                        వడ్డీ శాతం (Interest %)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          value={calcInterestRate}
+                          onChange={(e) => setCalcInterestRate(Math.max(0, Number(e.target.value) || 0))}
+                          className="w-full h-10 px-3 pr-8 text-sm font-mono font-bold rounded-xl border border-[#C5E1A5] bg-[#F2F8E1]/30 focus:bg-white focus:border-[#166534] focus:ring-2 focus:ring-[#166534]/15 outline-none transition-all"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">%</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 block mb-1">
+                        వారాలు (Duration Weeks)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="104"
+                        value={calcWeeks}
+                        onChange={(e) => setCalcWeeks(Math.max(1, Number(e.target.value) || 1))}
+                        className="w-full h-10 px-3 text-sm font-mono font-bold rounded-xl border border-[#C5E1A5] bg-[#F2F8E1]/30 focus:bg-white focus:border-[#166534] focus:ring-2 focus:ring-[#166534]/15 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Calculated Results Panel */}
+              <div className="mt-5 p-4 rounded-xl bg-[#F2F8E1] border border-[#C5E1A5] space-y-2.5">
+                <div className="flex items-center justify-between text-xs text-slate-700">
+                  <span>మొత్తం వడ్డీ (Total Interest):</span>
+                  <span className="font-mono font-extrabold text-[#166534] text-sm">
+                    ₹{calcTotalInterest.toLocaleString('en-IN')}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-slate-700">
+                  <span>మొత్తం చెల్లించవలసినది (Total Payable):</span>
+                  <span className="font-mono font-extrabold text-[#0F172A] text-sm">
+                    ₹{calcTotalPayable.toLocaleString('en-IN')}
+                  </span>
+                </div>
+
+                <div className="pt-2 border-t border-[#C5E1A5] flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#166534]">
+                    ప్రతి వారం వాయిదా (Weekly Installment):
+                  </span>
+                  <span className="font-mono font-black text-base text-[#166534]">
+                    ₹{calcWeeklyInstallment.toLocaleString('en-IN')} /వారం
+                  </span>
+                </div>
+
+                <div className="text-[10px] text-slate-500 flex justify-between">
+                  <span>రోజువారీ సమానం (Daily Equivalent):</span>
+                  <span className="font-mono font-bold text-slate-700">~₹{calcDailyInstallment} /రోజు</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Column 2: Installment Column Collections Matrix (7 cols) */}
+            <div className="lg:col-span-7 bg-white p-5 rounded-2xl border border-[#C5E1A5] shadow-xs flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-xl bg-[#E8F5C8] text-[#166534]">
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-[#0F172A]">
+                        వాయిదాల వారీ వసూలు సమాచారం
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        ప్రతి వాయిదా కాలమ్‌లో వసూలైన నగదు వివరాలు
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-mono font-extrabold text-[#166534] bg-[#E8F5C8] px-2.5 py-1 rounded-full">
+                    {currentDateColumns.length} వాయిదాలు
+                  </span>
+                </div>
+
+                {/* Grid of Columns */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-[260px] overflow-y-auto pr-1">
+                  {currentDateColumns.map((colDate, cIdx) => {
+                    const colSum = colSums[cIdx] || 0;
+                    const colPayersCount = filteredRows.filter((r) => {
+                      const p = getPayment(r, cIdx);
+                      const amt = parseFloat((p.amount || '').replace(/,/g, '')) || 0;
+                      return amt > 0;
+                    }).length;
+
+                    return (
+                      <div
+                        key={cIdx}
+                        className="p-3 rounded-xl bg-[#F2F8E1]/60 border border-[#C5E1A5] hover:border-[#166534] transition-all flex flex-col justify-between"
+                      >
+                        <div className="flex items-center justify-between text-[11px] text-slate-600 mb-1">
+                          <span className="font-bold text-[#166534]">వాయిదా {cIdx + 1}</span>
+                          <span className="font-mono text-[10px] text-slate-500">{colDate}</span>
+                        </div>
+                        <div className="text-sm font-mono font-extrabold text-[#0F172A]">
+                          ₹{colSum.toLocaleString('en-IN')}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-1 flex justify-between">
+                          <span>చెల్లించినవారు:</span>
+                          <span className="font-bold text-[#166534]">{colPayersCount} ఆసాములు</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Aggregate footer */}
+              <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-600">
+                <span>మొత్తం వాయిదాల వసూలు:</span>
+                <span className="font-mono font-black text-sm text-emerald-700">
+                  ₹{totalPaidAll.toLocaleString('en-IN')}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Remaining Balances & Settlement Ledger Table */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-[#0F172A]">
+                  ఆసాముల సమగ్ర బాకీ పట్టిక (Borrower Remaining Dues Register)
+                </h3>
+                <p className="text-xs text-slate-500">
+                  ప్రతి ఆసామి అసలు సొమ్ము, వసూలైన మొత్తం మరియు మిగిలిన బాకీ వివరాలు
+                </p>
+              </div>
+
+              {/* Search & Filter Bar */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Search inside table */}
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={remainingSearchTerm}
+                    onChange={(e) => setRemainingSearchTerm(e.target.value)}
+                    placeholder="పేరు లేదా నెంబర్ ద్వారా వెతకండి..."
+                    className="w-full h-9 pl-8 pr-7 text-xs bg-slate-50 border border-[#C5E1A5] focus:bg-white focus:border-[#166534] rounded-xl outline-none font-medium text-slate-800"
+                  />
+                  {remainingSearchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setRemainingSearchTerm('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Quick Filter Buttons */}
+                <div className="flex items-center gap-1 bg-[#F2F8E1] p-1 rounded-xl border border-[#C5E1A5]">
+                  <button
+                    type="button"
+                    onClick={() => setRemainingTableFilter('all')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${remainingTableFilter === 'all'
+                        ? 'bg-[#166534] text-white shadow-2xs'
+                        : 'text-[#166534] hover:bg-[#DCECB5]'
+                      }`}
+                  >
+                    అన్నీ ({filteredRows.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRemainingTableFilter('due')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${remainingTableFilter === 'due'
+                        ? 'bg-amber-800 text-white shadow-2xs'
+                        : 'text-amber-900 hover:bg-amber-100'
+                      }`}
+                  >
+                    బాకీ ఉన్నవి ({filteredRows.filter((r) => !r.isClosed && getRowTotals(r).remaining > 0).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRemainingTableFilter('settled')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${remainingTableFilter === 'settled'
+                        ? 'bg-emerald-700 text-white shadow-2xs'
+                        : 'text-emerald-800 hover:bg-emerald-100'
+                      }`}
+                  >
+                    పూర్తయినవి ({filteredRows.filter((r) => r.isClosed || getRowTotals(r).remaining <= 0).length})
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Table Container */}
+            <div className="overflow-x-auto rounded-xl border border-[#C5E1A5]">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-[#F2F8E1] text-[#166534] font-bold border-b border-[#C5E1A5]">
+                    <th className="py-2.5 px-3 text-center w-12">వ.సం.</th>
+                    <th className="py-2.5 px-3 w-20">తేది</th>
+                    <th className="py-2.5 px-3">ఆసామి పేరు (తెలుగు / English)</th>
+                    <th className="py-2.5 px-3">వస్తువు</th>
+                    <th className="py-2.5 px-3 text-right">సొమ్ము (₹)</th>
+                    <th className="py-2.5 px-3 text-right">వసూలు (₹)</th>
+                    <th className="py-2.5 px-3 text-right">మిగిలిన బాకీ (₹)</th>
+                    <th className="py-2.5 px-3 text-center w-28">రికవరీ పురోగతి</th>
+                    <th className="py-2.5 px-3 text-center w-24">స్థితి</th>
+                    <th className="py-2.5 px-3 text-center w-24">చర్య</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {filteredRows.length === 0 ? (
+                <tbody className="divide-y divide-[#C5E1A5]/40 text-slate-800">
+                  {remainingTableRows.length === 0 ? (
                     <tr>
-                      <td colSpan={6 + leftPageCount} className="ledger-cell-border p-8 text-center text-amber-900/60 font-medium text-xs">
-                        {searchTerm ? `"${searchTerm}" కి సంబంధించి ఎటువంటి రికార్డులు కనుగొనబడలేదు` : 'ఈ ఖాతా పుస్తకంలో రికార్డులు ఏవీ లేవు'}
+                      <td colSpan={10} className="py-8 text-center text-slate-400 font-medium">
+                        ఎలాంటి రికార్డులు కనుగొనబడలేదు (No borrower records match the current filter)
                       </td>
                     </tr>
                   ) : (
-                    filteredRows.map((row, rIdx) => (
-                    <tr key={row.id} className={`h-[48px] hover:bg-slate-500/5 transition-colors ${row.isClosed ? 'bg-slate-100/55 opacity-90' : ''}`}>
-                      {/* SNo cell */}
-                      <td className="ledger-cell-border p-0 text-center font-sans">
-                        <input
-                          type="text"
-                          disabled={!isEditing}
-                          value={row.sNo}
-                          data-row={rIdx}
-                          data-col={1}
-                          onChange={(e) => handleCellChange(row.id, 'sNo', e.target.value)}
-                          onKeyDown={(e) => handleKeyDown(e, rIdx, 1)}
-                          onFocus={() => setActiveCell({ row: rIdx, col: 1 })}
-                          className={`ledger-cell-input text-center font-bold text-slate-800 ${row.isClosed ? 'closed-row-input' : ''}`}
-                        />
-                      </td>
+                    remainingTableRows.map((row, rIdx) => {
+                      const { totalPaid, remaining, amount } = getRowTotals(row);
+                      const pct = amount > 0 ? Math.min(100, Math.round((totalPaid / amount) * 100)) : 0;
 
-                      {/* Borrow Date cell */}
-                      <td className="ledger-cell-border p-0 text-center font-sans">
-                        <input
-                          type="text"
-                          disabled={!isEditing}
-                          value={row.date}
-                          data-row={rIdx}
-                          data-col={0}
-                          onChange={(e) => handleCellChange(row.id, 'date', e.target.value)}
-                          onKeyDown={(e) => handleKeyDown(e, rIdx, 0)}
-                          onFocus={() => setActiveCell({ row: rIdx, col: 0 })}
-                          className={`ledger-cell-input text-center ${row.isClosed ? 'closed-row-input' : ''}`}
-                          placeholder="DD-MM"
-                        />
-                      </td>
-
-                      {/* Separate Telugu Name cell */}
-                      <td className="ledger-cell-border p-0 text-left telugu-font">
-                        <div className="flex items-center w-full h-full relative">
-                          {isEditing && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteRow(row.id)}
-                              className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded no-print ml-1 flex-shrink-0"
-                              title="Delete Person"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          <input
-                            type="text"
-                            disabled={!isEditing}
-                            value={row.nameTelugu || ''}
-                            data-row={rIdx}
-                            data-col={2}
-                            onChange={(e) => handleNameChange(row.id, 'telugu', e.target.value)}
-                            onKeyDown={(e) => handleKeyDown(e, rIdx, 2)}
-                            onFocus={() => setActiveCell({ row: rIdx, col: 2 })}
-                            className={`ledger-cell-input text-left px-2 font-semibold ${row.isClosed ? 'closed-row-input' : ''}`}
-                            placeholder="తెలుగు పేరు"
-                          />
-                        </div>
-                      </td>
-
-                      {/* Separate English Name cell */}
-                      <td className="ledger-cell-border p-0 text-left font-sans">
-                        <input
-                          type="text"
-                          disabled={!isEditing}
-                          value={row.nameEnglish || ''}
-                          data-row={rIdx}
-                          data-col={3}
-                          onChange={(e) => handleNameChange(row.id, 'english', e.target.value)}
-                          onKeyDown={(e) => handleKeyDown(e, rIdx, 3)}
-                          onFocus={() => setActiveCell({ row: rIdx, col: 3 })}
-                          className={`ledger-cell-input text-left px-2 text-xs font-semibold text-slate-700 ${row.isClosed ? 'closed-row-input' : ''}`}
-                          placeholder="English Name"
-                        />
-                      </td>
-
-                      {/* Item Details cell */}
-                      <td className="ledger-cell-border p-0 text-left">
-                        <input
-                          type="text"
-                          disabled={!isEditing}
-                          value={row.item}
-                          data-row={rIdx}
-                          data-col={4}
-                          onChange={(e) => handleCellChange(row.id, 'item', e.target.value)}
-                          onKeyDown={(e) => handleKeyDown(e, rIdx, 4)}
-                          onFocus={() => setActiveCell({ row: rIdx, col: 4 })}
-                          className={`ledger-cell-input text-left px-2 text-xs text-slate-600 ${row.isClosed ? 'closed-row-input' : ''}`}
-                          placeholder=""
-                        />
-                      </td>
-
-                      {/* Amount cell */}
-                      <td className="ledger-cell-border p-0 text-right font-sans">
-                        <input
-                          type="text"
-                          disabled={!isEditing}
-                          value={row.amount}
-                          data-row={rIdx}
-                          data-col={5}
-                          onChange={(e) => handleCellChange(row.id, 'amount', e.target.value)}
-                          onKeyDown={(e) => handleKeyDown(e, rIdx, 5)}
-                          onFocus={() => setActiveCell({ row: rIdx, col: 5 })}
-                          className={`ledger-cell-input text-right px-1.5 font-bold text-[#166534] ${row.isClosed ? 'closed-row-input' : ''}`}
-                          placeholder=""
-                        />
-                      </td>
-
-                      {/* Date + Amount Installment cells index 0 to leftPageCount - 1 */}
-                      {Array.from({ length: leftPageCount }).map((_, dIdx) => {
-                        const pay = getPayment(row, dIdx);
-                        return (
-                          <td key={dIdx} className={`ledger-cell-border p-0 text-center font-sans bg-amber-50/10 ${dIdx === leftPageCount - 1 ? 'border-r-0' : ''}`}>
-                            {isEditing ? (
-                              <div className="flex flex-col h-full w-full justify-center">
-                                {/* Top Date Input */}
-                                <input
-                                  type="text"
-                                  value={pay.date}
-                                  placeholder="DD-MM"
-                                  onChange={(e) => handlePaymentChange(row.id, dIdx, 'date', e.target.value)}
-                                  className="w-full text-center text-[10px] font-semibold text-amber-900 bg-amber-50/40 border-b border-amber-200/60 focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
-                                  title="Payment Date (DD-MM)"
-                                />
-                                {/* Bottom Amount Input */}
-                                <input
-                                  type="text"
-                                  value={pay.amount}
-                                  placeholder="₹ సొమ్ము"
-                                  onChange={(e) => handlePaymentChange(row.id, dIdx, 'amount', e.target.value)}
-                                  className="w-full text-center text-[11px] font-bold text-slate-800 bg-transparent focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
-                                  title="Payment Amount"
-                                />
-                              </div>
-                            ) : (
-                              <div className={`flex flex-col items-center justify-center h-full py-0.5 leading-tight select-text ${row.isClosed ? 'closed-row-input' : ''}`}>
-                                {pay.amount || pay.date ? (
-                                  <>
-                                    <span className="text-[10px] text-amber-900/80 font-bold font-sans tracking-tight">
-                                      {pay.date || '—'}
-                                    </span>
-                                    <span className="text-[12px] font-bold text-[#166534] font-sans">
-                                      {pay.amount ? `₹${pay.amount}` : '—'}
-                                    </span>
-                                  </>
-                                ) : (
-                                  <span className="text-slate-300 font-sans text-xs">—</span>
-                                )}
+                      return (
+                        <tr
+                          key={row.id || rIdx}
+                          className={`hover:bg-[#F2F8E1]/40 transition-colors ${row.isClosed ? 'bg-slate-50/70 text-slate-400' : ''
+                            }`}
+                        >
+                          <td className="py-2.5 px-3 text-center font-bold font-mono text-slate-600">
+                            {row.sNo || rIdx + 1}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-slate-600 whitespace-nowrap">
+                            {row.date || '—'}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="font-bold text-[#0F172A] telugu-font">
+                              {row.nameTelugu || row.name || '—'}
+                            </div>
+                            {row.nameEnglish && (
+                              <div className="text-[11px] text-slate-500 font-sans">
+                                {row.nameEnglish}
                               </div>
                             )}
                           </td>
-                        );
-                      })}
-                    </tr>
-                  )))}
-
-                  {/* Bottom Add Person Button Row */}
-                  {isEditing && (
-                    <tr className="no-print h-[38px] bg-[#b45309]/5">
-                      <td colSpan={6 + leftPageCount} className="ledger-cell-border border-r-0 p-1.5 text-center">
-                        <button
-                          onClick={handleAddRow}
-                          className="px-4 py-1.5 text-xs bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 border border-teal-800 text-white rounded-lg font-bold transition-all shadow-md hover:scale-[1.02] active:scale-[0.98] leading-none"
-                        >
-                          ➕ Add Person Row
-                        </button>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* ========================================================
-              RIGHT PAGE SPREAD (Continuation of Installment Columns, Totals)
-             ======================================================== */}
-            <div
-              className="right-page-curl paper-grain pt-4 pb-6 pl-0 pr-4 relative z-10 flex flex-col items-start overflow-x-auto scrollbar-book"
-              style={{ width: `${rightPageWidth}px` }}
-            >
-
-              <table className="ledger-table w-full table-fixed border-collapse select-text">
-                <thead className="bg-[#b45309]/5">
-                  {/* Headers Row */}
-                  <tr className="double-header-border text-slate-900 font-bold text-center h-[54px] select-none text-[11px] leading-tight">
-                    {/* Right side dynamic installment columns */}
-                    {Array.from({ length: rightPageCount }).map((_, i) => {
-                      const dIdx = i + leftPageCount;
-                      return (
-                        <th key={dIdx} className={`ledger-cell-border w-[88px] p-0 align-middle ${i === 0 ? 'border-l-0' : ''}`}>
-                          <div className="relative flex flex-col items-center justify-center h-full px-1 py-1 select-none">
-                            <span className="text-[10px] text-amber-950 font-bold leading-tight">
-                              వాయిదా {dIdx + 1}
-                            </span>
-                            <span className="text-[8.5px] text-amber-800/80 font-sans font-bold tracking-tight">
-                              తేది | సొమ్ము
-                            </span>
-                            {isEditing && (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteColumn(dIdx)}
-                                className="absolute -top-1.5 right-0.5 text-[10px] text-red-500 hover:text-red-700 bg-white/95 rounded-full w-4 h-4 flex items-center justify-center shadow border border-red-200 no-print"
-                                title="Delete Column"
-                              >
-                                ×
-                              </button>
+                          <td className="py-2.5 px-3 text-slate-600">
+                            {row.item || '—'}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-800">
+                            ₹{amount.toLocaleString('en-IN')}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-700">
+                            ₹{totalPaid.toLocaleString('en-IN')}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-extrabold">
+                            {remaining > 0 ? (
+                              <span className="text-amber-900 bg-amber-100 px-2 py-0.5 rounded-md">
+                                ₹{remaining.toLocaleString('en-IN')}
+                              </span>
+                            ) : (
+                              <span className="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
+                                ₹0 (క్లియర్)
+                              </span>
                             )}
-                          </div>
-                        </th>
-                      );
-                    })}
-
-                    {/* Summary columns */}
-                    <th className="ledger-cell-border w-[100px] select-none font-bold align-middle">
-                      మొత్తం వసూలు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Total Paid</span>
-                    </th>
-                    <th className="ledger-cell-border w-[100px] select-none font-bold align-middle">
-                      బాకీ సొమ్ము<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Remaining</span>
-                    </th>
-                    <th className="ledger-cell-border w-[80px] select-none font-bold align-middle">
-                      ముగింపు<br /><span className="text-[9px] text-slate-500 font-sans font-bold">Status</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={rightPageCount + 3} className="ledger-cell-border p-8 text-center text-amber-900/60 font-medium text-xs">
-                        —
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredRows.map((row, rIdx) => {
-                    const { totalPaid, target, amount } = getRowTotals(row);
-                    return (
-                      <tr key={row.id} className={`h-[48px] hover:bg-slate-500/5 transition-colors ${row.isClosed ? 'bg-slate-100/55 opacity-90' : ''}`}>
-
-                        {/* Date + Amount Installment cells index leftPageCount to end */}
-                        {Array.from({ length: rightPageCount }).map((_, i) => {
-                          const dIdx = i + leftPageCount;
-                          const pay = getPayment(row, dIdx);
-                          return (
-                            <td key={dIdx} className={`ledger-cell-border p-0 text-center font-sans bg-amber-50/10 ${i === 0 ? 'border-l-0' : ''}`}>
-                              {isEditing ? (
-                                <div className="flex flex-col h-full w-full justify-center">
-                                  {/* Top Date Input */}
-                                  <input
-                                    type="text"
-                                    value={pay.date}
-                                    placeholder="DD-MM"
-                                    onChange={(e) => handlePaymentChange(row.id, dIdx, 'date', e.target.value)}
-                                    className="w-full text-center text-[10px] font-semibold text-amber-900 bg-amber-50/40 border-b border-amber-200/60 focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
-                                    title="Payment Date (DD-MM)"
-                                  />
-                                  {/* Bottom Amount Input */}
-                                  <input
-                                    type="text"
-                                    value={pay.amount}
-                                    placeholder="₹ సొమ్ము"
-                                    onChange={(e) => handlePaymentChange(row.id, dIdx, 'amount', e.target.value)}
-                                    className="w-full text-center text-[11px] font-bold text-slate-800 bg-transparent focus:bg-amber-100/60 outline-none py-0.5 leading-tight placeholder-slate-400/60"
-                                    title="Payment Amount"
-                                  />
-                                </div>
-                              ) : (
-                                <div className={`flex flex-col items-center justify-center h-full py-0.5 leading-tight select-text ${row.isClosed ? 'closed-row-input' : ''}`}>
-                                  {pay.amount || pay.date ? (
-                                    <>
-                                      <span className="text-[10px] text-amber-900/80 font-bold font-sans tracking-tight">
-                                        {pay.date || '—'}
-                                      </span>
-                                      <span className="text-[12px] font-bold text-[#166534] font-sans">
-                                        {pay.amount ? `₹${pay.amount}` : '—'}
-                                      </span>
-                                    </>
-                                  ) : (
-                                    <span className="text-slate-300 font-sans text-xs">—</span>
-                                  )}
-                                </div>
-                              )}
-                            </td>
-                          );
-                        })}
-
-                        {/* Total Paid Column */}
-                        <td className={`ledger-cell-border p-1 text-center font-sans font-extrabold text-[#059669] bg-emerald-50/20 ${row.isClosed ? 'line-through text-slate-400 opacity-60' : ''}`}>
-                          {row.amount ? totalPaid || '0' : ''}
-                        </td>
-
-                        {/* Remaining Balance Column */}
-                        <td className={`ledger-cell-border p-0 text-center font-sans transition-colors ${(target - totalPaid) <= 0 && totalPaid > 0
-                          ? 'bg-emerald-100/40 text-emerald-800 font-extrabold'
-                          : 'bg-amber-50/10'
-                          }`}>
-                          <div className="relative flex items-center justify-center h-full w-full">
-                            <input
-                              type="text"
-                              disabled={!isEditing}
-                              value={
-                                activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length
-                                  ? (row.initialRemaining !== undefined ? row.initialRemaining : (row.amount ? row.amount : ''))
-                                  : (row.amount ? (target - totalPaid).toString() : '')
-                              }
-                              data-row={rIdx}
-                              data-col={6 + currentDateColumns.length}
-                              onChange={(e) => handleCellChange(row.id, 'initialRemaining', e.target.value)}
-                              onKeyDown={(e) => handleKeyDown(e, rIdx, 6 + currentDateColumns.length)}
-                              onFocus={() => setActiveCell({ row: rIdx, col: 6 + currentDateColumns.length })}
-                              onBlur={() => {
-                                // Small timeout so click on "+5%" badge registers before activeCell resets to null
-                                setTimeout(() => setActiveCell(null), 150);
-                              }}
-                              className={`ledger-cell-input text-center text-xs font-extrabold ${(activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length) ? 'pr-8' : ''
-                                } ${(target - totalPaid) <= 0 && totalPaid > 0
-                                  ? 'text-emerald-700 font-extrabold'
-                                  : 'text-amber-900'
-                                } ${row.isClosed ? 'closed-row-input' : ''}`}
-                              placeholder={row.amount ? (amount - totalPaid).toString() : ''}
-                            />
-                            {isEditing && activeCell?.row === rIdx && activeCell?.col === 6 + currentDateColumns.length && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                  const currentVal = parseFloat(row.initialRemaining || row.amount || '0') || 0;
-                                  const newVal = Math.round(currentVal * 1.05);
-                                  handleCellChange(row.id, 'initialRemaining', newVal.toString());
-                                }}
-                                className="absolute right-1 px-1 py-0.5 text-[9px] bg-amber-600 text-white rounded hover:bg-amber-700 font-sans font-bold no-print"
-                                title="Add 5% Interest"
-                              >
-                                +5%
-                              </button>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Status Column (Closed Action) */}
-                        <td className="ledger-cell-border p-1 text-center font-sans">
-                          {isEditing ? (
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${pct >= 100 ? 'bg-emerald-600' : pct >= 50 ? 'bg-[#166534]' : 'bg-amber-600'
+                                  }`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-mono text-slate-500 mt-0.5 block">
+                              {pct}%
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span
+                              className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${row.isClosed
+                                  ? 'bg-slate-200 text-slate-700'
+                                  : remaining <= 0
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
+                            >
+                              {row.isClosed ? 'Closed' : remaining <= 0 ? 'Settled' : 'Active'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
                             <button
                               type="button"
-                              onClick={() => handleToggleClosed(row.id)}
-                              className={`px-2 py-0.5 text-[10px] font-bold rounded shadow transition-all ${row.isClosed
-                                ? 'bg-red-100 text-red-700 border border-red-200 hover:bg-red-200'
-                                : 'bg-emerald-100 text-emerald-700 border border-emerald-200 hover:bg-emerald-200'
+                              onClick={() => handleToggleStatus(row)}
+                              className={`px-2 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${row.isClosed
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                                  : 'bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200'
                                 }`}
+                              title={row.isClosed ? 'Reopen Account' : 'Mark as Settled/Closed'}
                             >
                               {row.isClosed ? 'Reopen' : 'Close'}
                             </button>
-                          ) : (
-                            <span
-                              className={`inline-block py-0.5 px-2 rounded-full text-[9px] font-extrabold uppercase tracking-wider ${row.isClosed
-                                ? 'bg-red-100 text-red-800 border border-red-200'
-                                : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                }`}
-                            >
-                              {row.isClosed ? 'Closed' : 'Active'}
-                            </span>
-                          )}
-                        </td>
-
-                      </tr>
-                    );
-                  })
-                )}
-
-                  {/* Bottom Add Column Button Row */}
-                  {isEditing && (
-                    <tr className="no-print h-[38px] bg-[#b45309]/5">
-                      <td colSpan={rightPageCount + 3} className="ledger-cell-border border-l-0 p-1.5 text-center">
-                        <button
-                          onClick={handleAddColumn}
-                          className="px-4 py-1.5 text-xs bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 border border-amber-800 text-white rounded-lg font-bold transition-all shadow-md hover:scale-[1.02] active:scale-[0.98] leading-none"
-                        >
-                          ➕ Add Date Column
-                        </button>
-                      </td>
-                    </tr>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
+                <tfoot className="bg-[#F2F8E1] border-t-2 border-[#C5E1A5] font-extrabold text-[#0F172A]">
+                  <tr>
+                    <td colSpan={4} className="py-2.5 px-3 text-center uppercase tracking-wider">
+                      మొత్తం (TOTAL)
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono text-slate-900">
+                      ₹{totalPrincipal.toLocaleString('en-IN')}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono text-emerald-800">
+                      ₹{totalPaidAll.toLocaleString('en-IN')}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono text-amber-950">
+                      ₹{totalRemainingAll.toLocaleString('en-IN')}
+                    </td>
+                    <td className="py-2.5 px-3 text-center font-mono text-xs">
+                      {overallRecoveryRate}%
+                    </td>
+                    <td colSpan={2} className="py-2.5 px-3 text-center text-slate-500 text-[11px]">
+                      {filteredRows.length} రికార్డులు
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
-
-
           </div>
-          )}
         </div>
-      </div>
+      )}
 
       {/* 3. Dedicated High-Definition Print Ledger Layout (Guaranteed 100% Page Fit) */}
       <div className="print-only-ledger hidden print:block p-2 bg-white text-black font-sans">

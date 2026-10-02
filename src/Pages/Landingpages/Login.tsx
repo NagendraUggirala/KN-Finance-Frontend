@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Lock,
   Mail,
@@ -45,6 +46,7 @@ export const Login: React.FC<LoginProps> = ({
   onLoginSuccess,
   onShowToast,
 }) => {
+  const navigate = useNavigate();
   // Current modal view
   const [view, setView] = useState<AuthView>('signin');
 
@@ -697,6 +699,22 @@ export const Login: React.FC<LoginProps> = ({
                 className="font-bold text-[#166534] hover:underline cursor-pointer"
               >
                 Set up your password
+              </button>
+            </div>
+
+            {/* Direct Super Admin Gateway */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-center text-xs">
+
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  navigate('/superadmin');
+                }}
+                className="font-bold text-slate-700 hover:text-black flex items-center gap-1 hover:underline cursor-pointer"
+              >
+
+                <ArrowRight className="w-3.5 h-3.5 text-[#D4A017]" />
               </button>
             </div>
           </form>

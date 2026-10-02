@@ -67,7 +67,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
 
         {/* KPI 1: Total Revenue */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
+        <div className="p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
           <div className="flex items-center justify-between text-xs text-[#64748B] font-bold">
             <span>Total Revenue</span>
             <button
@@ -75,7 +75,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 setHideRevenue(!hideRevenue);
                 onShowToast(hideRevenue ? "Revealed Total Revenue." : "Masked Total Revenue.");
               }}
-              className="p-1 rounded-lg text-slate-400 hover:text-[#166534] hover:bg-slate-50 transition-colors"
+              className="p-1 rounded-lg text-slate-400 hover:text-[#166534] hover:bg-[#E2F0C2] transition-colors"
               title={hideRevenue ? "Reveal Value" : "Hide Value"}
             >
               {hideRevenue ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -93,7 +93,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
 
         {/* KPI 2: Total Members / Employees */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
+        <div className="p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
           <div className="flex items-center justify-between text-xs text-[#64748B] font-bold">
             <span>Total Members / Employees</span>
             <button
@@ -101,7 +101,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 setHideEmployees(!hideEmployees);
                 onShowToast(hideEmployees ? "Revealed Total Members." : "Masked Total Members.");
               }}
-              className="p-1 rounded-lg text-slate-400 hover:text-[#166534] hover:bg-slate-50 transition-colors"
+              className="p-1 rounded-lg text-slate-400 hover:text-[#166534] hover:bg-[#E2F0C2] transition-colors"
               title={hideEmployees ? "Reveal Value" : "Hide Value"}
             >
               {hideEmployees ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -119,7 +119,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
 
         {/* KPI 3: Today's Generated Amount */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
+        <div className="p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
           <div className="flex items-center justify-between text-xs text-[#64748B] font-bold">
             <span>Today's Generated Amount</span>
             <button
@@ -127,7 +127,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 setHideTodayAmount(!hideTodayAmount);
                 onShowToast(hideTodayAmount ? "Revealed Today's Generated Amount." : "Masked Today's Generated Amount.");
               }}
-              className="p-1 rounded-lg text-slate-400 hover:text-[#166534] hover:bg-slate-50 transition-colors"
+              className="p-1 rounded-lg text-slate-400 hover:text-[#166534] hover:bg-[#E2F0C2] transition-colors"
               title={hideTodayAmount ? "Reveal Value" : "Hide Value"}
             >
               {hideTodayAmount ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -145,7 +145,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
 
         {/* KPI 4: Monthly Maintenance */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
+        <div className="p-5 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-36">
           <div className="flex items-center justify-between text-xs text-[#64748B] font-bold">
             <span>Monthly Maintenance</span>
             <button
@@ -153,7 +153,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 setHideMaintenance(!hideMaintenance);
                 onShowToast(hideMaintenance ? "Revealed Monthly Maintenance." : "Masked Monthly Maintenance.");
               }}
-              className="p-1 rounded-lg text-slate-400 hover:text-[#166534] hover:bg-slate-50 transition-colors"
+              className="p-1 rounded-lg text-slate-400 hover:text-[#166534] hover:bg-[#E2F0C2] transition-colors"
               title={hideMaintenance ? "Reveal Value" : "Hide Value"}
             >
               {hideMaintenance ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -176,19 +176,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
         {/* Personnel Telemetry Ratio Card */}
-        <div className="lg:col-span-5 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between gap-4">
+        <div className="lg:col-span-5 p-6 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs flex flex-col justify-between gap-4">
           <div>
             <h3 className="text-base font-extrabold text-[#0F172A]">Personnel Telemetry</h3>
             <p className="text-xs text-[#64748B]">Active vs Inactive status distributions.</p>
           </div>
 
           <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
+            <div className="p-4 rounded-xl bg-[#F2F8E1]/60 border border-[#C5E1A5]/60 space-y-2">
               <div className="flex justify-between text-xs font-bold text-[#0F172A]">
                 <span>Active Personnel Rate</span>
                 <span className="text-[#166534]">{totalEmployeesCount ? Math.round((activeCount / totalEmployeesCount) * 100) : 0}%</span>
               </div>
-              <div className="w-full h-2.5 rounded-full bg-slate-200 overflow-hidden">
+              <div className="w-full h-2.5 rounded-full bg-[#C5E1A5]/40 overflow-hidden">
                 <div
                   className="h-full bg-[#166534] rounded-full transition-all duration-500"
                   style={{ width: `${totalEmployeesCount ? (activeCount / totalEmployeesCount) * 100 : 0}%` }}
@@ -197,12 +197,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <p className="text-[10px] text-[#64748B]">{activeCount} employees online / assigned to fields</p>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
+            <div className="p-4 rounded-xl bg-[#F2F8E1]/60 border border-[#C5E1A5]/60 space-y-2">
               <div className="flex justify-between text-xs font-bold text-[#0F172A]">
                 <span>Inactive Personnel Rate</span>
                 <span className="text-amber-700">{totalEmployeesCount ? Math.round((inactiveCount / totalEmployeesCount) * 100) : 0}%</span>
               </div>
-              <div className="w-full h-2.5 rounded-full bg-slate-200 overflow-hidden">
+              <div className="w-full h-2.5 rounded-full bg-[#C5E1A5]/40 overflow-hidden">
                 <div
                   className="h-full bg-amber-500 rounded-full transition-all duration-500"
                   style={{ width: `${totalEmployeesCount ? (inactiveCount / totalEmployeesCount) * 100 : 0}%` }}
@@ -212,7 +212,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
           </div>
 
-          <div className="p-3 rounded-xl bg-green-50 border border-green-100 flex items-center justify-between text-[#166534] text-xs">
+          <div className="p-3 rounded-xl bg-[#E8F5C8] border border-[#C5E1A5] flex items-center justify-between text-[#166534] text-xs">
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-[#D4A017]" />
               <span className="font-bold">Operation Integrity Check</span>
@@ -222,7 +222,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
 
         {/* Assigned Areas List */}
-        <div className="lg:col-span-7 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between gap-4">
+        <div className="lg:col-span-7 p-6 rounded-2xl bg-white border border-[#C5E1A5] shadow-xs flex flex-col justify-between gap-4">
           <div>
             <h3 className="text-base font-extrabold text-[#0F172A]">Field Deployment Map</h3>
             <p className="text-xs text-[#64748B]">Assigned operational coverage per territory.</p>
@@ -231,7 +231,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 overflow-y-auto max-h-56 pr-1">
             {Object.keys(areaBreakdown).length > 0 ? (
               Object.entries(areaBreakdown).map(([area, count]) => (
-                <div key={area} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-3 text-xs">
+                <div key={area} className="p-3.5 rounded-xl bg-[#F2F8E1]/60 border border-[#C5E1A5] flex items-center gap-3 text-xs">
                   <div className="w-8 h-8 rounded-lg bg-[#166534]/10 text-[#166534] flex items-center justify-center font-bold">
                     <MapPin className="w-4 h-4 text-[#D4A017]" />
                   </div>
@@ -248,7 +248,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             )}
           </div>
 
-          <div className="border-t border-slate-100 pt-3 text-[11px] text-[#64748B] flex justify-between items-center">
+          <div className="border-t border-[#C5E1A5]/60 pt-3 text-[11px] text-[#64748B] flex justify-between items-center">
             <span>Total Operational Coverage Areas: <strong>{Object.keys(areaBreakdown).length}</strong></span>
             <span className="font-bold text-[#166534] hover:underline cursor-pointer">View Coverage Table →</span>
           </div>

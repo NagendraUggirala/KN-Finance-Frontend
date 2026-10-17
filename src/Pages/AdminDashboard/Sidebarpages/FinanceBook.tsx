@@ -20,7 +20,8 @@ import {
   TrendingUp,
   Receipt,
   Layers,
-  IndianRupee
+  IndianRupee,
+  Building
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { Employee, FinanceRecord } from '../types';
@@ -32,7 +33,10 @@ import {
 import {
   getActiveFinanceBookApi,
   batchSaveFinanceBookApi,
-  updateBorrowerStatusApi
+  updateBorrowerStatusApi,
+  isSuperAdminAuthenticated,
+  getAllAdminsApi,
+  type AdminItem
 } from '../../../lib/api';
 
 interface FinanceBookProps {
@@ -98,6 +102,23 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
   const [loadingSeconds, setLoadingSeconds] = useState<number>(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isOfflineBypassed, setIsOfflineBypassed] = useState<boolean>(false);
+
+  // Multi-Tenant Workspace Isolation State (Super Admin Tenant Switcher)
+  const isSuperAdmin = useMemo(() => isSuperAdminAuthenticated(), []);
+  const [adminList, setAdminList] = useState<AdminItem[]>([]);
+  const [selectedAdminId, setSelectedAdminId] = useState<string>('');
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      getAllAdminsApi()
+        .then(res => {
+          if (res?.admins && Array.isArray(res.admins)) {
+            setAdminList(res.admins);
+          }
+        })
+        .catch(err => console.warn('Super Admin workspace list notice:', err));
+    }
+  }, [isSuperAdmin]);
 
   // In-component Save Status & Notification
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -204,7 +225,7 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
     };
 
     try {
-      const saveRes = await batchSaveFinanceBookApi(batchPayload);
+      const saveRes = await batchSaveFinanceBookApi(batchPayload, selectedAdminId || undefined);
       setRows(tempRows);
       setDateColumns(tempDateColumns);
       setIsEditing(false);
@@ -357,13 +378,14 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
     };
   }, [isSyncingWithBackend]);
 
-  // Fetch Active Ledger from Cloud Backend (GET /api/v1/finance-book/active)
-  const fetchActiveLedger = async () => {
+  // Fetch Active Ledger from Cloud Backend (GET /api/v1/finance-book/active?adminId=...)
+  const fetchActiveLedger = async (targetAdminId?: string | React.MouseEvent<HTMLButtonElement>) => {
+    const adminIdToUse = typeof targetAdminId === 'string' ? targetAdminId : selectedAdminId;
     setIsSyncingWithBackend(true);
     setLoadError(null);
     setLoadingSeconds(0);
     try {
-      const res = await getActiveFinanceBookApi();
+      const res = await getActiveFinanceBookApi(adminIdToUse || undefined);
       if (res?.data) {
         if (res.data.ledgerBook?.id) {
           setLedgerBookId(res.data.ledgerBook.id);
@@ -373,6 +395,8 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
         }
         if (res.data.dateColumns && res.data.dateColumns.length > 0) {
           setDateColumns(res.data.dateColumns);
+        } else {
+          setDateColumns(['08-08']);
         }
         if (res.data.rows && res.data.rows.length > 0) {
           const loadedRows: LedgerRowData[] = res.data.rows.map((r, idx) => {
@@ -408,8 +432,10 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
             };
           });
           setRows(loadedRows);
-          setLastSyncTime(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
+        } else {
+          setRows([]);
         }
+        setLastSyncTime(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
       }
     } catch (err: any) {
       console.warn('Backend active ledger fetch notice:', err.message);
@@ -1300,6 +1326,52 @@ export const FinanceBook: React.FC<FinanceBookProps> = ({
       `}} />
 
 
+
+      {/* Super Admin Multi-Tenant Workspace Selector */}
+      {isSuperAdmin && (
+        <div className="no-print p-3 sm:p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-white to-amber-50/70 border border-emerald-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-[#166534] text-[#D4A017] flex items-center justify-center shadow-xs">
+              <Building className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black text-[#0F172A] uppercase tracking-wide">
+                  Super Admin Tenant Scoping
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#166534] text-white">
+                  Multi-Tenant Isolation
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Inspect and manage isolated ledger books for individual branch administrators.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-bold text-slate-700 whitespace-nowrap">
+              Admin Workspace:
+            </label>
+            <select
+              value={selectedAdminId}
+              onChange={(e) => {
+                const newAdminId = e.target.value;
+                setSelectedAdminId(newAdminId);
+                fetchActiveLedger(newAdminId);
+              }}
+              className="h-9 px-3 text-xs font-bold bg-white border border-[#C5E1A5] text-[#0F172A] rounded-xl outline-none focus:ring-2 focus:ring-[#166534]/20 cursor-pointer shadow-2xs min-w-[240px]"
+            >
+              <option value="">🏢 Master / Global Workspace (Default)</option>
+              {adminList.map((adm) => (
+                <option key={adm._id} value={adm._id}>
+                  👤 {adm.username} ({adm.email})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       {activeFinanceSection === 'ledger' && (
         <>

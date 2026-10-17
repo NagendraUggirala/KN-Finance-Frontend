@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search,
   Plus,
@@ -28,7 +28,10 @@ import {
   updateAdminEmployeeApi,
   deleteAdminEmployeeApi,
   updateAdminEmployeeStatusApi,
-  resetAdminEmployeePasswordApi
+  resetAdminEmployeePasswordApi,
+  isSuperAdminAuthenticated,
+  getAllAdminsApi,
+  type AdminItem
 } from '../../../lib/api';
 
 interface EmployeeDirectoryProps {
@@ -82,8 +85,26 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
   const [isResetting, setIsResetting] = useState(false);
   const [passwordCopied, setPasswordCopied] = useState(false);
 
-  // Load employees from backend on mount and when filter changes
-  const fetchEmployees = async () => {
+  // Multi-Tenant Workspace Isolation State (Super Admin Tenant Switcher)
+  const isSuperAdmin = useMemo(() => isSuperAdminAuthenticated(), []);
+  const [adminList, setAdminList] = useState<AdminItem[]>([]);
+  const [selectedAdminId, setSelectedAdminId] = useState<string>('');
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      getAllAdminsApi()
+        .then(res => {
+          if (res?.admins && Array.isArray(res.admins)) {
+            setAdminList(res.admins);
+          }
+        })
+        .catch(err => console.warn('Failed to load admin workspaces for employee directory:', err));
+    }
+  }, [isSuperAdmin]);
+
+  // Load employees from backend on mount and when filter or workspace changes
+  const fetchEmployees = async (targetAdminId?: string | React.MouseEvent<HTMLButtonElement>) => {
+    const adminIdToUse = typeof targetAdminId === 'string' ? targetAdminId : selectedAdminId;
     setIsLoadingFromBackend(true);
     try {
       const res = await getAdminEmployeesApi({
@@ -91,6 +112,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         village: villageFilter !== 'All' ? villageFilter : undefined,
         assignedOperationalArea: areaFilter !== 'All' ? areaFilter : undefined,
         status: statusFilter !== 'All' ? statusFilter : undefined,
+        adminId: adminIdToUse || undefined,
       });
 
       if (res?.data?.employees && res.data.employees.length > 0) {
@@ -117,9 +139,12 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
           status: e.status
         }));
         setEmployees(mapped);
+      } else {
+        setEmployees([]);
       }
     } catch (err: any) {
       console.warn('Backend employees fetch notice:', err.message);
+      setEmployees([]);
     } finally {
       setIsLoadingFromBackend(false);
     }
@@ -413,6 +438,52 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
 
   return (
     <div className="space-y-6">
+
+      {/* Super Admin Multi-Tenant Workspace Selector */}
+      {isSuperAdmin && (
+        <div className="no-print p-3 sm:p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-white to-amber-50/70 border border-emerald-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-[#166534] text-[#D4A017] flex items-center justify-center shadow-xs">
+              <Building className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black text-[#0F172A] uppercase tracking-wide">
+                  Super Admin Tenant Scoping
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#166534] text-white">
+                  Multi-Tenant Isolation
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Inspect and manage isolated employee rosters for individual branch administrators.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-bold text-slate-700 whitespace-nowrap">
+              Admin Workspace:
+            </label>
+            <select
+              value={selectedAdminId}
+              onChange={(e) => {
+                const newAdminId = e.target.value;
+                setSelectedAdminId(newAdminId);
+                fetchEmployees(newAdminId);
+              }}
+              className="h-9 px-3 text-xs font-bold bg-white border border-[#C5E1A5] text-[#0F172A] rounded-xl outline-none focus:ring-2 focus:ring-[#166534]/20 cursor-pointer shadow-2xs min-w-[240px]"
+            >
+              <option value="">🏢 Master / Global Workspace (Default)</option>
+              {adminList.map((adm) => (
+                <option key={adm._id} value={adm._id}>
+                  👤 {adm.username} ({adm.email})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       {/* Header and Quick Options */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs">

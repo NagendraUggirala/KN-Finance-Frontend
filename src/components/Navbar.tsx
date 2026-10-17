@@ -26,19 +26,17 @@ export const Navbar: React.FC<NavbarProps> = ({
     { path: '/about', label: 'About Us' },
     { path: '/features', label: 'Features' },
     { path: '/contact', label: 'Contact Us' },
-    { path: '/dashboard', label: 'Live Dashboard' },
-    { path: '/employee', label: 'Employee Portal' },
   ];
 
   const getDashboardPath = () => {
-    if (userRole === 'super_admin') return '/super-admin';
+    if (userRole === 'super_admin' || userRole === 'superadmin') return '/super-admin';
     if (userRole === 'admin') return '/admin';
     if (userRole === 'employee') return '/employee';
     return '/dashboard';
   };
 
   const getRoleBadge = () => {
-    if (userRole === 'super_admin') {
+    if (userRole === 'super_admin' || userRole === 'superadmin') {
       return (
         <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-extrabold bg-slate-900 text-[#D4A017] border border-amber-500/30">
           <Crown className="w-3 h-3 text-[#D4A017]" />

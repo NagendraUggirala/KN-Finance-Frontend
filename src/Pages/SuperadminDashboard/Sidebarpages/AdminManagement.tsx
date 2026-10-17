@@ -177,8 +177,8 @@ export const AdminManagement: React.FC<AdminManagementProps> = ({ onShowToast })
         password: formPassword,
       };
 
-      const res = await createAdminApi(payload);
-      onShowToast(res.message || `Admin "${formName}" created successfully!`);
+      await createAdminApi(payload);
+      onShowToast(`Admin "${formUsername.trim()}" created! Login credentials have been emailed to ${formEmail.trim()}.`);
       setIsAddModalOpen(false);
       // Refresh list
       fetchAdmins(true);
@@ -868,12 +868,18 @@ export const AdminManagement: React.FC<AdminManagementProps> = ({ onShowToast })
                 </div>
               </div>
 
-              {/* Immutable Role Notice */}
-              <div className="p-3 rounded-xl bg-[#F2F8E1] border border-[#C5E1A5] text-[11px] text-[#166534] flex items-start gap-2">
-                <Shield className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>
-                  The account will automatically be created with the <strong className="font-bold">admin</strong> role and registered under your Super Admin identity.
-                </span>
+              {/* Automated Provisioning & Email Delivery Notice */}
+              <div className="p-3 rounded-xl bg-[#F2F8E1] border border-[#C5E1A5] text-[11px] text-[#166534] flex items-start gap-2.5">
+                <Shield className="w-4 h-4 shrink-0 mt-0.5 text-[#166534]" />
+                <div className="space-y-1">
+                  <p>
+                    The account will automatically be created with the <strong className="font-bold">admin</strong> role and registered under your Super Admin identity with a dedicated workspace.
+                  </p>
+                  <p className="text-[10px] text-emerald-800 font-semibold flex items-center gap-1">
+                    <span>✉️</span>
+                    <span>Upon registration, an email will automatically be sent to the administrator with their credentials and access link.</span>
+                  </p>
+                </div>
               </div>
 
               {/* Modal Actions */}

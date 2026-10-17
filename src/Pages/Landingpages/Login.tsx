@@ -3,33 +3,33 @@ import { useNavigate } from 'react-router-dom';
 import {
   Lock,
   Mail,
-  Users,
   Eye,
   EyeOff,
   ArrowRight,
   ArrowLeft,
-  ShieldCheck,
   X,
   KeyRound,
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  Clock,
-  Check,
-  Shield,
   Sparkles,
-  Move
+  Shield,
+  Smartphone,
+  Check,
+  User,
+  Crown
 } from 'lucide-react';
 import {
-  adminLoginApi,
-  employeeLoginApi,
   forgotPasswordApi,
   resendOtpApi,
   verifyOtpApi,
-  resetPasswordApi
+  resetPasswordApi,
+  setSuperAdminSession,
+  setAdminSession,
+  setEmployeeSession
 } from '../../lib/api';
 
-export type UserRole = 'admin' | 'employee' | 'user' | 'super_admin';
+export type UserRole = 'admin' | 'employee' | 'user' | 'super_admin' | 'superadmin';
 
 type AuthView = 'signin' | 'request_otp' | 'verify_otp' | 'reset_password' | 'reset_success';
 
@@ -38,6 +38,7 @@ interface LoginProps {
   onClose: () => void;
   onLoginSuccess: (userName: string, role: UserRole) => void;
   onShowToast: (msg: string) => void;
+  initialRole?: 'admin' | 'employee' | 'superadmin' | 'super_admin';
 }
 
 export const Login: React.FC<LoginProps> = ({
@@ -47,15 +48,16 @@ export const Login: React.FC<LoginProps> = ({
   onShowToast,
 }) => {
   const navigate = useNavigate();
+
   // Current modal view
   const [view, setView] = useState<AuthView>('signin');
 
-  // Sign in state - 2 main portal roles: Admin and Employee
-  const [role, setRole] = useState<'admin' | 'employee'>('admin');
+  // Sign in state (Unified Login - no role selection required)
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Forgot password & OTP verification state
   const [resetEmail, setResetEmail] = useState('');
@@ -68,7 +70,6 @@ export const Login: React.FC<LoginProps> = ({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [flowError, setFlowError] = useState<string | null>(null);
   const [flowSuccessMessage, setFlowSuccessMessage] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -96,62 +97,25 @@ export const Login: React.FC<LoginProps> = ({
 
   if (!isOpen) return null;
 
-  // Auto-detect role when typing email
-  const handleEmailChange = (val: string) => {
-    setEmail(val);
-    const lower = val.toLowerCase().trim();
-    if (lower.includes('nagendra') || lower.includes('admin')) {
-      setRole('admin');
-    } else if (lower.includes('qwerty') || lower.includes('employee')) {
-      setRole('employee');
-    }
-  };
-
-  // Quick fill Admin Credentials: nagendrauggirala@gmail.com / qwerty@123
-  const handleQuickFillAdmin = () => {
-    setRole('admin');
-    setEmail('nagendrauggirala@gmail.com');
-    setPassword('qwerty@123');
+  // Quick fill helper for development/testing
+  const handleQuickFill = (testEmail: string, testPass: string) => {
+    setEmail(testEmail);
+    setPassword(testPass);
     setLoginError(null);
   };
 
-  // Quick fill Employee Credentials: qwerty@gmail.com / Qwerty@123
-  const handleQuickFillEmployee = () => {
-    setRole('employee');
-    setEmail('qwerty@gmail.com');
-    setPassword('Qwerty@123');
-    setLoginError(null);
-  };
-
-  // Drag and Drop helpers for credentials
-  const handleDragStart = (e: React.DragEvent, text: string) => {
-    e.dataTransfer.setData('text/plain', text);
-  };
-
-  const handleDropEmail = (e: React.DragEvent) => {
-    e.preventDefault();
-    const text = e.dataTransfer.getData('text/plain');
-    if (text) {
-      handleEmailChange(text.trim());
-    }
-  };
-
-  const handleDropPassword = (e: React.DragEvent) => {
-    e.preventDefault();
-    const text = e.dataTransfer.getData('text/plain');
-    if (text) {
-      setPassword(text.trim());
-    }
-  };
-
-  // Submit Sign In (POST /api/auth/login OR POST /api/v1/auth/employee/login)
+  /**
+   * Unified Login Handler:
+   * Sends { email, password } to POST /api/auth/login.
+   * Dynamically handles role-based redirection ('superadmin', 'admin', 'employee').
+   */
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
 
     const identifier = email.trim();
     if (!identifier) {
-      setLoginError('Please enter your work or account email.');
+      setLoginError('Please enter your username or email.');
       return;
     }
     if (!password) {
@@ -162,70 +126,78 @@ export const Login: React.FC<LoginProps> = ({
     setIsSubmitting(true);
 
     try {
-      // Determine if Employee or Admin
-      const isEmployeeTarget =
-        role === 'employee' ||
-        identifier.toLowerCase().includes('qwerty@gmail.com') ||
-        identifier.toLowerCase().includes('employee');
+      // Connect to unified login endpoint: POST http://localhost:5000/api/auth/login
+      // Send both 'email' and 'username' keys with the identifier so the backend accepts both
+      const requestPayload = { email: identifier, username: identifier, password };
+      const requestHeaders = { 'Content-Type': 'application/json' };
 
-      if (isEmployeeTarget) {
-        // 1. Employee Login: POST /api/v1/auth/employee/login
-        try {
-          const response = await employeeLoginApi({
-            email: identifier,
-            password: password,
-          });
-          const emp = response.employee;
-          const activeName = emp?.fullName || emp?.name || identifier.split('@')[0];
-          onLoginSuccess(activeName, 'employee');
-          onShowToast(response.message || `Welcome, ${activeName}! Field Operations Console ready.`);
-          onClose();
-          return;
-        } catch (empErr: any) {
-          // If user had Admin credentials, attempt Admin fallback
-          if (identifier.toLowerCase().includes('nagendra') || !identifier.toLowerCase().includes('qwerty')) {
-            try {
-              const adminResp = await adminLoginApi({ email: identifier, password });
-              const activeName = adminResp.user?.name || adminResp.user?.username || identifier.split('@')[0];
-              onLoginSuccess(activeName, 'admin');
-              onShowToast(adminResp.message || `Welcome back, ${activeName}! Admin Portal ready.`);
-              onClose();
-              return;
-            } catch {
-              // fallback failed, throw original error
-            }
-          }
-          throw empErr;
+      let response: Response;
+      try {
+        response = await fetch('http://localhost:5000/api/auth/login', {
+          method: 'POST',
+          headers: requestHeaders,
+          body: JSON.stringify(requestPayload),
+        });
+      } catch {
+        // Fallback to configured base URL
+        const fallbackBase = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').replace(/\/+$/, '');
+        response = await fetch(`${fallbackBase}/api/auth/login`, {
+          method: 'POST',
+          headers: requestHeaders,
+          body: JSON.stringify(requestPayload),
+        });
+      }
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || data.error || 'Login failed. Please check credentials.');
+      }
+
+      // 1. Store JWT token and user info as requested
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+      }
+      if (data.user) {
+        localStorage.setItem('user', JSON.stringify(data.user));
+        if (data.user.role) {
+          localStorage.setItem('role', data.user.role);
         }
-      } else {
-        // 2. Admin Login: POST /api/auth/login
-        try {
-          const response = await adminLoginApi({
-            email: identifier,
-            password: password,
-          });
-          const activeName = response.user?.name || response.user?.username || identifier.split('@')[0];
-          onLoginSuccess(activeName, 'admin');
-          onShowToast(response.message || `Welcome back, ${activeName}! Admin Portal ready.`);
-          onClose();
-          return;
-        } catch (adminErr: any) {
-          // If user had Employee credentials (e.g. qwerty@gmail.com), attempt Employee fallback
-          if (identifier.toLowerCase().includes('qwerty@gmail.com') || adminErr.message?.includes('401') || adminErr.message?.includes('Unauthorized')) {
-            try {
-              const empResp = await employeeLoginApi({ email: identifier, password });
-              const emp = empResp.employee;
-              const activeName = emp?.fullName || emp?.name || identifier.split('@')[0];
-              onLoginSuccess(activeName, 'employee');
-              onShowToast(empResp.message || `Welcome, ${activeName}! Field Operations Console ready.`);
-              onClose();
-              return;
-            } catch {
-              // fallback failed, throw original error
-            }
-          }
-          throw adminErr;
-        }
+      }
+
+      // 2. Persist role-specific keys so existing route guards and API clients work seamlessly
+      const roleRaw = (data.user?.role || '').toLowerCase();
+      const roleNormalized = roleRaw.replace('-', '_');
+
+      if (roleNormalized === 'superadmin' || roleNormalized === 'super_admin') {
+        setSuperAdminSession(data.token, data.user?.name || data.user?.username || identifier.split('@')[0], data.user);
+      } else if (roleNormalized === 'admin') {
+        setAdminSession(data.token, data.user);
+      } else if (roleNormalized === 'employee') {
+        setEmployeeSession(data.token, data.user);
+      }
+
+      // 3. Notify parent app state
+      const activeName = data.user?.name || data.user?.fullName || data.user?.username || identifier.split('@')[0];
+      onLoginSuccess(activeName, roleNormalized as UserRole);
+      onShowToast(data.message || `Welcome back, ${activeName}!`);
+      onClose();
+
+      // 4. Role-based dynamic redirect
+      switch (roleNormalized) {
+        case 'superadmin':
+        case 'super_admin':
+          navigate('/super-admin');
+          break;
+        case 'admin':
+          navigate('/admin');
+          break;
+        case 'employee':
+          navigate('/employee');
+          break;
+        default:
+          navigate('/');
+          break;
       }
     } catch (err: any) {
       setLoginError(err.message || 'Authentication failed. Please check your credentials.');
@@ -242,7 +214,7 @@ export const Login: React.FC<LoginProps> = ({
 
     const targetEmail = resetEmail.trim();
     if (!targetEmail || !targetEmail.includes('@')) {
-      setFlowError('Please provide a valid employee or administrator email address.');
+      setFlowError('Please provide a valid registered email address.');
       return;
     }
 
@@ -262,42 +234,31 @@ export const Login: React.FC<LoginProps> = ({
     }
   };
 
-  // Resend OTP (POST /api/auth/resend-otp)
+  // Resend OTP
   const handleResendOtp = async () => {
     if (resendTimer > 0 || isSubmitting) return;
+
     setFlowError(null);
+    setFlowSuccessMessage(null);
     setIsSubmitting(true);
 
     try {
       const response = await resendOtpApi({ email: resetEmail.trim() });
       setResendTimer(60);
-      setOtpValues(['', '', '', '', '', '']);
-      setFlowSuccessMessage(response.message || 'A new verification code has been dispatched.');
-      onShowToast(response.message || `New verification code sent to ${resetEmail}!`);
+      setFlowSuccessMessage(response.message || 'A new 6-digit verification code has been dispatched.');
+      onShowToast('Verification code resent successfully.');
     } catch (err: any) {
-      setFlowError(err.message || 'Failed to resend code. Please try again.');
+      setFlowError(err.message || 'Failed to resend verification code.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Handle individual 6-box OTP entry & auto-advance
+  // Handle OTP digit changes
   const handleOtpChange = (index: number, value: string) => {
-    if (value.length > 1) {
-      const pasted = value.replace(/\D/g, '').slice(0, 6).split('');
-      const newOtp = [...otpValues];
-      pasted.forEach((char, i) => {
-        if (i < 6) newOtp[i] = char;
-      });
-      setOtpValues(newOtp);
-      const nextIndex = Math.min(pasted.length, 5);
-      otpInputRefs.current[nextIndex]?.focus();
-      return;
-    }
-
-    const cleaned = value.replace(/\D/g, '');
+    const cleaned = value.replace(/[^0-9]/g, '');
     const newOtp = [...otpValues];
-    newOtp[index] = cleaned;
+    newOtp[index] = cleaned ? cleaned[cleaned.length - 1] : '';
     setOtpValues(newOtp);
 
     if (cleaned && index < 5) {
@@ -384,7 +345,7 @@ export const Login: React.FC<LoginProps> = ({
     }
   };
 
-  // Checklist states
+  // Password strength indicators
   const hasMinLength = newPassword.length >= 8;
   const hasNumberOrSpecial = /[0-9!@#$%^&*(),.?":{}|<>]/.test(newPassword);
   const passwordsMatch = newPassword.length > 0 && newPassword === confirmPassword;
@@ -411,10 +372,10 @@ export const Login: React.FC<LoginProps> = ({
           {view === 'signin' && (
             <>
               <h2 className="text-2xl font-extrabold text-[#0F172A] font-display">
-                Access KN Portal
+                Sign In to KN Finance
               </h2>
               <p className="text-xs text-[#64748B]">
-                Enter your credentials to manage wealth, assets, and operations.
+                Unified access for Super Admin, Branch Admin, and Field Officers.
               </p>
             </>
           )}
@@ -464,7 +425,7 @@ export const Login: React.FC<LoginProps> = ({
           )}
         </div>
 
-        {/* ---------------- VIEW 1: SIGN IN ---------------- */}
+        {/* ---------------- VIEW 1: UNIFIED SIGN IN ---------------- */}
         {view === 'signin' && (
           <form onSubmit={handleLoginSubmit} className="space-y-4">
 
@@ -476,150 +437,30 @@ export const Login: React.FC<LoginProps> = ({
             )}
 
 
-            {/* Drag & Drop / One-Click Credential Cards */}
-            <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200/80 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-amber-950 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-[#D4A017]" />
-                  <span>Credential Cards (Drag & Drop or Click to Fill)</span>
-                </span>
-                <span className="text-[10px] text-amber-700 font-semibold">1-Click Apply</span>
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                {/* Admin Credential Card */}
-                <div
-                  className={`p-2.5 rounded-xl border transition-all ${role === 'admin'
-                    ? 'bg-white border-[#166534] shadow-xs'
-                    : 'bg-white/80 border-slate-200 hover:border-slate-300'
-                    }`}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-extrabold text-[10px] text-[#166534] flex items-center gap-1">
-                      <Shield className="w-3 h-3 text-[#166534]" /> Admin Portal
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleQuickFillAdmin}
-                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#166534] text-white hover:bg-[#14532d] transition-colors"
-                      title="Apply admin credentials"
-                    >
-                      Fill Admin ↵
-                    </button>
-                  </div>
-                  <div className="space-y-1">
-                    <div
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, 'nagendrauggirala@gmail.com')}
-                      onClick={() => {
-                        setEmail('nagendrauggirala@gmail.com');
-                        setRole('admin');
-                      }}
-                      className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-green-50/80 border border-slate-200 text-slate-800 font-mono text-[10px] flex items-center justify-between cursor-grab active:cursor-grabbing transition-colors"
-                      title="Drag to Email field or click to fill"
-                    >
-                      <span className="truncate">nagendrauggirala@gmail.com</span>
-                      <Move className="w-2.5 h-2.5 text-slate-400 shrink-0 ml-1" />
-                    </div>
-                    <div
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, 'qwerty@123')}
-                      onClick={() => {
-                        setPassword('qwerty@123');
-                        setRole('admin');
-                      }}
-                      className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-green-50/80 border border-slate-200 text-slate-800 font-mono text-[10px] flex items-center justify-between cursor-grab active:cursor-grabbing transition-colors"
-                      title="Drag to Password field or click to fill"
-                    >
-                      <span>qwerty@123</span>
-                      <Move className="w-2.5 h-2.5 text-slate-400 shrink-0 ml-1" />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Employee Credential Card */}
-                <div
-                  className={`p-2.5 rounded-xl border transition-all ${role === 'employee'
-                    ? 'bg-white border-slate-900 shadow-xs'
-                    : 'bg-white/80 border-slate-200 hover:border-slate-300'
-                    }`}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-extrabold text-[10px] text-slate-900 flex items-center gap-1">
-                      <Users className="w-3 h-3 text-slate-900" /> Employee Portal
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleQuickFillEmployee}
-                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors"
-                      title="Apply employee credentials"
-                    >
-                      Fill Employee ↵
-                    </button>
-                  </div>
-                  <div className="space-y-1">
-                    <div
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, 'qwerty@gmail.com')}
-                      onClick={() => {
-                        setEmail('qwerty@gmail.com');
-                        setRole('employee');
-                      }}
-                      className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-blue-50/80 border border-slate-200 text-slate-800 font-mono text-[10px] flex items-center justify-between cursor-grab active:cursor-grabbing transition-colors"
-                      title="Drag to Email field or click to fill"
-                    >
-                      <span className="truncate">qwerty@gmail.com</span>
-                      <Move className="w-2.5 h-2.5 text-slate-400 shrink-0 ml-1" />
-                    </div>
-                    <div
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, 'Qwerty@123')}
-                      onClick={() => {
-                        setPassword('Qwerty@123');
-                        setRole('employee');
-                      }}
-                      className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-blue-50/80 border border-slate-200 text-slate-800 font-mono text-[10px] flex items-center justify-between cursor-grab active:cursor-grabbing transition-colors"
-                      title="Drag to Password field or click to fill"
-                    >
-                      <span>Qwerty@123</span>
-                      <Move className="w-2.5 h-2.5 text-slate-400 shrink-0 ml-1" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Email Field with Drop Support */}
+            {/* Username or Email Field (type="text" to allow superadmin / admin / email) */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-[#0F172A]">
-                  {role === 'admin' ? 'Admin Email Address' : 'Employee Work Email'}
-                </label>
-                <span className="text-[10px] text-slate-400">Drag & drop supported</span>
-              </div>
+              <label className="text-xs font-bold text-[#0F172A]">
+                Username or Email *
+              </label>
               <div className="relative">
                 <input
-                  type="email"
+                  type="text"
                   required
                   value={email}
-                  onChange={(e) => handleEmailChange(e.target.value)}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={handleDropEmail}
-                  placeholder={
-                    role === 'admin'
-                      ? 'nagendrauggirala@gmail.com'
-                      : 'qwerty@gmail.com'
-                  }
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="e.g. superadmin, admin, or email"
+                  autoComplete="username"
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-[#0F172A] text-xs focus:outline-none focus:border-[#166534] transition-all"
                 />
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
+                <User className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
               </div>
             </div>
 
-            {/* Password Field with Drop Support */}
+            {/* Password Field */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-[#0F172A]">Password</label>
+                <label className="text-xs font-bold text-[#0F172A]">Password *</label>
                 <button
                   type="button"
                   onClick={() => {
@@ -639,9 +480,8 @@ export const Login: React.FC<LoginProps> = ({
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={handleDropPassword}
                   placeholder="••••••••••••"
+                  autoComplete="current-password"
                   className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-[#0F172A] text-xs focus:outline-none focus:border-[#166534] transition-all"
                 />
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
@@ -656,16 +496,11 @@ export const Login: React.FC<LoginProps> = ({
               </div>
             </div>
 
-
-
             {/* Submit Button */}
             <button
               type="submit"
               disabled={isSubmitting}
-              className={`w-full py-3 rounded-xl text-xs font-extrabold text-white shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer mt-2 disabled:opacity-75 ${role === 'admin'
-                ? 'bg-[#166534] hover:bg-[#14532d]'
-                : 'bg-slate-900 hover:bg-slate-800'
-                }`}
+              className="w-full py-3.5 rounded-xl text-xs font-extrabold text-white bg-[#166534] hover:bg-[#14532d] shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer mt-2 disabled:opacity-75"
             >
               {isSubmitting ? (
                 <>
@@ -674,16 +509,11 @@ export const Login: React.FC<LoginProps> = ({
                 </>
               ) : (
                 <>
-                  <span>
-                    {role === 'admin'
-                      ? 'Sign In to Admin Portal (నిర్వాహకుడు)'
-                      : 'Sign In to Employee Portal (ఫీల్డ్ ఆఫీసర్)'}
-                  </span>
+                  <span>Login</span>
                   <ArrowRight className="w-4 h-4 text-[#D4A017]" />
                 </>
               )}
             </button>
-
 
             {/* First time setup option */}
             <div className="pt-1 text-center text-xs text-slate-500">
@@ -701,26 +531,10 @@ export const Login: React.FC<LoginProps> = ({
                 Set up your password
               </button>
             </div>
-
-            {/* Direct Super Admin Gateway */}
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-center text-xs">
-
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  navigate('/superadmin');
-                }}
-                className="font-bold text-slate-700 hover:text-black flex items-center gap-1 hover:underline cursor-pointer"
-              >
-
-                <ArrowRight className="w-3.5 h-3.5 text-[#D4A017]" />
-              </button>
-            </div>
           </form>
         )}
 
-        {/* ---------------- VIEW 2: REQUEST OTP VIA EMAIL (POST /api/auth/forgot-password) ---------------- */}
+        {/* ---------------- VIEW 2: REQUEST OTP VIA EMAIL ---------------- */}
         {view === 'request_otp' && (
           <form onSubmit={handleSendOtp} className="space-y-4">
 
@@ -741,13 +555,13 @@ export const Login: React.FC<LoginProps> = ({
                   required
                   value={resetEmail}
                   onChange={(e) => setResetEmail(e.target.value)}
-                  placeholder="qwerty@example.com"
+                  placeholder="name@example.com"
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-[#0F172A] text-xs focus:outline-none focus:border-[#166534] transition-all"
                 />
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                A 6-digit verification code (OTP) will be generated and dispatched to your email address.
+                A 6-digit verification code (OTP) will be dispatched to your registered address.
               </p>
             </div>
 
@@ -759,11 +573,11 @@ export const Login: React.FC<LoginProps> = ({
               {isSubmitting ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin text-[#D4A017]" />
-                  <span>Requesting OTP...</span>
+                  <span>Dispatching OTP...</span>
                 </>
               ) : (
                 <>
-                  <span>Send Verification Code (OTP)</span>
+                  <span>Send Verification Code</span>
                   <ArrowRight className="w-4 h-4 text-[#D4A017]" />
                 </>
               )}
@@ -773,10 +587,9 @@ export const Login: React.FC<LoginProps> = ({
               type="button"
               onClick={() => {
                 setFlowError(null);
-                setFlowSuccessMessage(null);
                 setView('signin');
               }}
-              className="w-full py-2 text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+              className="w-full py-2 text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Back to Sign In</span>
@@ -784,7 +597,7 @@ export const Login: React.FC<LoginProps> = ({
           </form>
         )}
 
-        {/* ---------------- VIEW 3: ENTER OTP CODE (POST /api/auth/verify-otp & /api/auth/resend-otp) ---------------- */}
+        {/* ---------------- VIEW 3: VERIFY OTP ---------------- */}
         {view === 'verify_otp' && (
           <form onSubmit={handleVerifyOtp} className="space-y-4">
 
@@ -804,45 +617,37 @@ export const Login: React.FC<LoginProps> = ({
 
             <div className="space-y-2">
               <label className="text-xs font-bold text-[#0F172A] block text-center">
-                6-Digit Verification Code
+                Enter 6-Digit OTP Code
               </label>
-
-              {/* 6 Individual Digit Inputs */}
-              <div className="flex items-center justify-center gap-2 sm:gap-2.5">
-                {otpValues.map((digit, index) => (
+              <div className="flex justify-center gap-2">
+                {otpValues.map((val, idx) => (
                   <input
-                    key={index}
-                    ref={(el) => { otpInputRefs.current[index] = el; }}
+                    key={idx}
+                    ref={(el) => { otpInputRefs.current[idx] = el; }}
                     type="text"
                     maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleOtpChange(index, e.target.value)}
-                    onKeyDown={(e) => handleOtpKeyDown(index, e)}
-                    className="w-10 h-12 sm:w-11 sm:h-13 text-center text-lg font-bold rounded-xl bg-slate-50 border border-slate-300 text-slate-900 focus:outline-none focus:border-[#166534] focus:ring-2 focus:ring-[#166534]/20 transition-all font-mono"
+                    value={val}
+                    onChange={(e) => handleOtpChange(idx, e.target.value)}
+                    onKeyDown={(e) => handleOtpKeyDown(idx, e)}
+                    className="w-10 h-12 text-center text-lg font-bold font-mono rounded-xl bg-slate-50 border border-slate-300 focus:outline-none focus:border-[#166534] focus:ring-1 focus:ring-[#166534] transition-all"
                   />
                 ))}
               </div>
+            </div>
 
-              {/* Resend Action & Timer */}
-              <div className="flex items-center justify-between text-xs pt-1 px-1">
-                <span className="text-slate-500">Didn't receive code?</span>
-                {resendTimer > 0 ? (
-                  <span className="flex items-center gap-1 text-slate-400 font-medium">
-                    <Clock className="w-3.5 h-3.5" />
-                    Resend in {resendTimer}s
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleResendOtp}
-                    disabled={isSubmitting}
-                    className="text-[#166534] font-bold hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Resend Code
-                  </button>
-                )}
-              </div>
+            <div className="text-center text-xs text-slate-500">
+              {resendTimer > 0 ? (
+                <span>Resend available in <strong className="text-slate-800">{resendTimer}s</strong></span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={isSubmitting}
+                  className="font-bold text-[#166534] hover:underline cursor-pointer disabled:opacity-50"
+                >
+                  Resend OTP Code
+                </button>
+              )}
             </div>
 
             <button
@@ -853,12 +658,12 @@ export const Login: React.FC<LoginProps> = ({
               {isSubmitting ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin text-[#D4A017]" />
-                  <span>Verifying OTP...</span>
+                  <span>Verifying Code...</span>
                 </>
               ) : (
                 <>
-                  <span>Verify OTP Code</span>
-                  <ArrowRight className="w-4 h-4 text-[#D4A017]" />
+                  <span>Verify OTP</span>
+                  <CheckCircle2 className="w-4 h-4 text-[#D4A017]" />
                 </>
               )}
             </button>
@@ -867,10 +672,9 @@ export const Login: React.FC<LoginProps> = ({
               type="button"
               onClick={() => {
                 setFlowError(null);
-                setFlowSuccessMessage(null);
                 setView('request_otp');
               }}
-              className="w-full py-2 text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+              className="w-full py-2 text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Change Email</span>
@@ -878,7 +682,7 @@ export const Login: React.FC<LoginProps> = ({
           </form>
         )}
 
-        {/* ---------------- VIEW 4: RESET / SET PASSWORD (POST /api/auth/reset-password) ---------------- */}
+        {/* ---------------- VIEW 4: RESET PASSWORD ---------------- */}
         {view === 'reset_password' && (
           <form onSubmit={handleSaveNewPassword} className="space-y-4">
 
@@ -889,16 +693,15 @@ export const Login: React.FC<LoginProps> = ({
               </div>
             )}
 
-            {/* New Password */}
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#0F172A]">New Password</label>
+              <label className="text-xs font-bold text-[#0F172A]">New Password *</label>
               <div className="relative">
                 <input
                   type={showNewPassword ? 'text' : 'password'}
                   required
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Min. 8 characters"
+                  placeholder="••••••••••••"
                   className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-[#0F172A] text-xs focus:outline-none focus:border-[#166534] transition-all"
                 />
                 <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
@@ -906,64 +709,54 @@ export const Login: React.FC<LoginProps> = ({
                   type="button"
                   onClick={() => setShowNewPassword(!showNewPassword)}
                   className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
-                  aria-label={showNewPassword ? 'Hide password' : 'Show password'}
                 >
                   {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
 
-            {/* Confirm New Password */}
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#0F172A]">Confirm New Password</label>
+              <label className="text-xs font-bold text-[#0F172A]">Confirm New Password *</label>
               <div className="relative">
                 <input
                   type={showConfirmPassword ? 'text' : 'password'}
                   required
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Re-enter your new password"
+                  placeholder="••••••••••••"
                   className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-[#0F172A] text-xs focus:outline-none focus:border-[#166534] transition-all"
                 />
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
+                <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
                 <button
                   type="button"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                   className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
-                  aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
                 >
                   {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
 
-            {/* Password Validation Requirements */}
-            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5 text-[11px]">
-              <div className="flex items-center gap-1.5 font-bold text-slate-700">
-                <ShieldCheck className="w-3.5 h-3.5 text-[#166534]" />
-                <span>Password Requirements:</span>
+            {/* Password checklist */}
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] space-y-1.5">
+              <div className={`flex items-center gap-1.5 ${hasMinLength ? 'text-emerald-700' : 'text-slate-500'}`}>
+                <Check className={`w-3.5 h-3.5 ${hasMinLength ? 'text-emerald-600' : 'text-slate-400'}`} />
+                <span>At least 8 characters</span>
               </div>
-              <div className="grid grid-cols-1 gap-1">
-                <span className={`flex items-center gap-1.5 ${hasMinLength ? 'text-emerald-700 font-semibold' : 'text-slate-400'}`}>
-                  <Check className={`w-3 h-3 ${hasMinLength ? 'text-emerald-600' : 'text-slate-300'}`} />
-                  At least 8 characters
-                </span>
-                <span className={`flex items-center gap-1.5 ${hasNumberOrSpecial ? 'text-emerald-700 font-semibold' : 'text-slate-400'}`}>
-                  <Check className={`w-3 h-3 ${hasNumberOrSpecial ? 'text-emerald-600' : 'text-slate-300'}`} />
-                  Contains number or symbol
-                </span>
-                <span className={`flex items-center gap-1.5 ${passwordsMatch ? 'text-emerald-700 font-semibold' : 'text-slate-400'}`}>
-                  <Check className={`w-3 h-3 ${passwordsMatch ? 'text-emerald-600' : 'text-slate-300'}`} />
-                  Passwords match
-                </span>
+              <div className={`flex items-center gap-1.5 ${hasNumberOrSpecial ? 'text-emerald-700' : 'text-slate-500'}`}>
+                <Check className={`w-3.5 h-3.5 ${hasNumberOrSpecial ? 'text-emerald-600' : 'text-slate-400'}`} />
+                <span>Includes a number or special symbol</span>
+              </div>
+              <div className={`flex items-center gap-1.5 ${passwordsMatch ? 'text-emerald-700' : 'text-slate-500'}`}>
+                <Check className={`w-3.5 h-3.5 ${passwordsMatch ? 'text-emerald-600' : 'text-slate-400'}`} />
+                <span>Passwords match</span>
               </div>
             </div>
 
-            {/* Submit New Password */}
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="w-full py-3 rounded-xl text-xs font-extrabold text-white bg-[#166534] hover:bg-[#14532d] shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
+              disabled={isSubmitting || !hasMinLength || !passwordsMatch}
+              className="w-full py-3 rounded-xl text-xs font-extrabold text-white bg-[#166534] hover:bg-[#14532d] shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
             >
               {isSubmitting ? (
                 <>
@@ -972,36 +765,28 @@ export const Login: React.FC<LoginProps> = ({
                 </>
               ) : (
                 <>
-                  <span>Save & Set New Password</span>
-                  <ArrowRight className="w-4 h-4 text-[#D4A017]" />
+                  <span>Save New Password</span>
+                  <CheckCircle2 className="w-4 h-4 text-[#D4A017]" />
                 </>
               )}
             </button>
           </form>
         )}
 
-        {/* ---------------- VIEW 5: SUCCESS CONFIRMATION ---------------- */}
+        {/* ---------------- VIEW 5: RESET SUCCESS ---------------- */}
         {view === 'reset_success' && (
-          <div className="text-center space-y-5 py-2">
-            <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center shadow-inner">
-              <CheckCircle2 className="w-9 h-9" />
+          <div className="text-center space-y-4 py-4">
+            <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-8 h-8" />
             </div>
-
-            <div className="space-y-1">
-              <h3 className="text-lg font-extrabold text-slate-900 font-display">
-                Credentials Updated!
-              </h3>
-              <p className="text-xs text-slate-600 max-w-xs mx-auto">
-                Your new password has been stored securely in KN Finance. You can now proceed to log in with your updated credentials.
-              </p>
-            </div>
-
+            <p className="text-xs text-slate-600 max-w-xs mx-auto">
+              Your password has been successfully updated. You can now sign in to your KN Finance portal with your new credentials.
+            </p>
             <button
               type="button"
               onClick={() => {
-                setPassword(newPassword);
-                if (resetEmail) setEmail(resetEmail);
                 setView('signin');
+                setPassword('');
               }}
               className="w-full py-3 rounded-xl text-xs font-extrabold text-white bg-[#166534] hover:bg-[#14532d] shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
@@ -1011,15 +796,7 @@ export const Login: React.FC<LoginProps> = ({
           </div>
         )}
 
-        {/* Security Footer Notice */}
-        <div className="pt-2 border-t border-slate-100 text-center text-[10px] text-slate-400 flex items-center justify-center gap-1">
-          <ShieldCheck className="w-3.5 h-3.5 text-[#166534]" />
-          <span>Protected by Enterprise TLS & 256-Bit Cryptography</span>
-        </div>
-
       </div>
     </div>
   );
 };
-
-export default Login;

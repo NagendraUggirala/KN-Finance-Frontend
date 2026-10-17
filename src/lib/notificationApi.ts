@@ -5,11 +5,11 @@ import type {
   AdminInboxResponse,
 } from '../types/notification';
 
-// Prioritize configured API base (which issued the current session token), then local backend, then cloud Render
-const configuredBase = (import.meta.env.VITE_API_BASE_URL || 'https://kn-finance-backend.onrender.com').replace(/\/+$/, '');
+const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const configuredBase = (import.meta.env.VITE_API_BASE_URL || (isLocal ? 'http://localhost:5000' : 'https://kn-finance-backend.onrender.com')).replace(/\/+$/, '');
 const CANDIDATE_API_BASES = [
-  `${configuredBase}/api/v1/notifications`,
   'http://localhost:5000/api/v1/notifications',
+  `${configuredBase}/api/v1/notifications`,
   'https://kn-finance-backend.onrender.com/api/v1/notifications',
 ].filter((b, idx, self) => Boolean(b) && self.indexOf(b) === idx);
 
@@ -110,10 +110,17 @@ async function requestWithFallback<T>(
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        // If 401 Unauthorized, token might belong to the other candidate gateway
-        if (response.status === 401 && CANDIDATE_API_BASES.length > 1) {
-          lastError = new Error(data?.message || 'Unauthorized');
-          continue;
+        // If 401 Unauthorized, session token is invalid or expired
+        if (response.status === 401) {
+          const message = data?.message || data?.error || 'Unauthorized: Invalid or expired token.';
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('kn_auth_expired', {
+                detail: { message },
+              })
+            );
+          }
+          throw new Error(message);
         }
 
         const message =

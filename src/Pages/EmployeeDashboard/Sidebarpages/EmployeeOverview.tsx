@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   TrendingUp,
   Banknote,
@@ -11,8 +11,7 @@ import {
   Sparkles,
   FileText,
   PlusCircle,
-  Eye,
-  EyeOff
+
 } from 'lucide-react';
 import type { EmployeeProfile, AssignedBorrower, CollectionRecord, DailyExpense } from '../types';
 
@@ -32,7 +31,7 @@ export const EmployeeOverview: React.FC<EmployeeOverviewProps> = ({
   expenses,
   onNavigateTab,
 }) => {
-  const [hideFigures, setHideFigures] = useState<boolean>(false);
+
 
   // Today's date string
   const todayStr = new Date().toISOString().split('T')[0];
@@ -45,8 +44,10 @@ export const EmployeeOverview: React.FC<EmployeeOverviewProps> = ({
   const todayExpenses = expenses.filter((e) => e.date === todayStr);
   const todayExpensesTotal = todayExpenses.reduce((sum, e) => sum + e.amount, 0);
 
-  // Net Cash in Hand
-  const netCashInHand = Math.max(0, todayCollectionsTotal - todayExpensesTotal);
+  // Total outstanding balance across all assigned borrowers
+  const totalOutstandingRemaining = borrowers
+    .filter((b) => !b.isClosed)
+    .reduce((sum, b) => sum + (Number(b.remainingBalance) || 0), 0);
 
   // Customers metrics
   const totalCustomers = borrowers.length;
@@ -59,18 +60,13 @@ export const EmployeeOverview: React.FC<EmployeeOverviewProps> = ({
   // Accounts closed today
   const closedToday = borrowers.filter((b) => b.closedDate === todayStr).length;
 
-  // Total outstanding balance across all assigned borrowers
-  const totalOutstandingRemaining = borrowers
-    .filter((b) => !b.isClosed)
-    .reduce((sum, b) => sum + (Number(b.remainingBalance) || 0), 0);
-
   // Daily target (assumed 25,000 for field collection)
   const dailyTarget = 25000;
   const targetPct = Math.min(100, Math.round((todayCollectionsTotal / dailyTarget) * 100));
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
-      
+
       {/* 1. Welcome Header Banner */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-800 to-[#166534] p-6 sm:p-8 text-white shadow-xl">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -97,31 +93,13 @@ export const EmployeeOverview: React.FC<EmployeeOverviewProps> = ({
             </div>
           </div>
 
-          {/* Quick Net Cash Badge */}
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 sm:p-5 border border-white/20 flex flex-col items-start md:items-end min-w-[200px]">
-            <div className="flex items-center gap-2 text-xs text-slate-300 font-bold">
-              <span>Net Cash in Hand (మిగిలిన సొమ్ము)</span>
-              <button
-                onClick={() => setHideFigures(!hideFigures)}
-                className="p-1 rounded text-slate-400 hover:text-white transition-colors"
-                title="Toggle Visibility"
-              >
-                {hideFigures ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              </button>
-            </div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-[#D4A017] font-mono mt-1">
-              {hideFigures ? '••••••' : `₹${netCashInHand.toLocaleString('en-IN')}`}
-            </div>
-            <p className="text-[10px] text-emerald-300 mt-1">
-              Total Collections (₹{todayCollectionsTotal.toLocaleString('en-IN')}) - Expenses (₹{todayExpensesTotal.toLocaleString('en-IN')})
-            </p>
-          </div>
+
         </div>
       </div>
 
       {/* 2. Key Metrics Grid (6 Metric Cards) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        
+
         {/* Metric 1: Today's Collection */}
         <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-2 hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between">
@@ -131,7 +109,7 @@ export const EmployeeOverview: React.FC<EmployeeOverviewProps> = ({
             </div>
           </div>
           <div className="text-xl font-extrabold text-[#0F172A] font-mono">
-            {hideFigures ? '••••' : `₹${todayCollectionsTotal.toLocaleString('en-IN')}`}
+            ₹{todayCollectionsTotal.toLocaleString('en-IN')}
           </div>
           <div className="text-[10px] text-emerald-700 font-bold flex items-center justify-between">
             <span>{todayCollections.length} Installments</span>
@@ -148,7 +126,7 @@ export const EmployeeOverview: React.FC<EmployeeOverviewProps> = ({
             </div>
           </div>
           <div className="text-xl font-extrabold text-rose-600 font-mono">
-            {hideFigures ? '••••' : `₹${todayExpensesTotal.toLocaleString('en-IN')}`}
+            ₹{todayExpensesTotal.toLocaleString('en-IN')}
           </div>
           <div className="text-[10px] text-slate-500 font-medium">
             <span>{todayExpenses.length} Expense Slips</span>
@@ -164,7 +142,7 @@ export const EmployeeOverview: React.FC<EmployeeOverviewProps> = ({
             </div>
           </div>
           <div className="text-xl font-extrabold text-amber-900 font-mono">
-            {hideFigures ? '••••' : `₹${totalOutstandingRemaining.toLocaleString('en-IN')}`}
+            ₹{totalOutstandingRemaining.toLocaleString('en-IN')}
           </div>
           <div className="text-[10px] text-slate-500 font-medium">
             <span>{activeCustomers} Active Accounts</span>
@@ -224,7 +202,7 @@ export const EmployeeOverview: React.FC<EmployeeOverviewProps> = ({
 
       {/* 3. Daily Target Progress & Quick Shortcuts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* Daily Collection Goal Progress */}
         <div className="lg:col-span-2 p-6 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
@@ -366,9 +344,8 @@ export const EmployeeOverview: React.FC<EmployeeOverviewProps> = ({
                     <td className="p-3 text-slate-600">{col.village}</td>
                     <td className="p-3 text-slate-500 font-mono">{col.time}</td>
                     <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        col.paymentType === 'UPI' ? 'bg-purple-100 text-purple-700' : 'bg-emerald-100 text-emerald-800'
-                      }`}>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${col.paymentType === 'UPI' ? 'bg-purple-100 text-purple-700' : 'bg-emerald-100 text-emerald-800'
+                        }`}>
                         {col.paymentType}
                       </span>
                     </td>

@@ -464,17 +464,22 @@ export async function resetPasswordApi(payload: ResetPasswordPayload): Promise<R
 }
 
 /**
- * GET /api/superadmin/admins
+ * GET /api/admins or /api/superadmin/admins
  * Retrieve a list of all Admin accounts (passwords excluded).
  */
 export async function getAllAdminsApi(): Promise<AdminListResponse> {
   const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
-  const url = `${baseUrl}/api/superadmin/admins`;
-
-  const response = await fetch(url, {
+  let response = await fetch(`${baseUrl}/api/admins`, {
     method: 'GET',
     headers: getAuthHeaders(),
   });
+
+  if (response.status === 404) {
+    response = await fetch(`${baseUrl}/api/superadmin/admins`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+  }
 
   const data = await response.json().catch(() => ({}));
 
@@ -492,12 +497,17 @@ export async function getAllAdminsApi(): Promise<AdminListResponse> {
  */
 export async function getAdminByIdApi(adminId: string): Promise<AdminResponse> {
   const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
-  const url = `${baseUrl}/api/superadmin/admins/${encodeURIComponent(adminId)}`;
-
-  const response = await fetch(url, {
+  let response = await fetch(`${baseUrl}/api/admins/${encodeURIComponent(adminId)}`, {
     method: 'GET',
     headers: getAuthHeaders(),
   });
+
+  if (response.status === 404) {
+    response = await fetch(`${baseUrl}/api/superadmin/admins/${encodeURIComponent(adminId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+  }
 
   const data = await response.json().catch(() => ({}));
 
@@ -510,18 +520,30 @@ export async function getAdminByIdApi(adminId: string): Promise<AdminResponse> {
 }
 
 /**
- * POST /api/superadmin/admins
- * Create a new Admin account.
+ * POST /api/admins or /api/superadmin/admins
+ * Create a new Admin account. Backend automatically provisions isolated LedgerBook
+ * and sends credentials via welcome email.
  */
 export async function createAdminApi(payload: CreateAdminPayload): Promise<AdminResponse> {
   const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
-  const url = `${baseUrl}/api/superadmin/admins`;
+  const bodyPayload = {
+    ...payload,
+    role: 'admin',
+  };
 
-  const response = await fetch(url, {
+  let response = await fetch(`${baseUrl}/api/admins`, {
     method: 'POST',
     headers: getAuthHeaders(),
-    body: JSON.stringify(payload),
+    body: JSON.stringify(bodyPayload),
   });
+
+  if (response.status === 404) {
+    response = await fetch(`${baseUrl}/api/superadmin/admins`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(bodyPayload),
+    });
+  }
 
   const data = await response.json().catch(() => ({}));
 
@@ -797,17 +819,27 @@ export interface UpdateBorrowerRowPayload {
 }
 
 /**
- * GET /api/v1/finance-book/active
+ * GET /api/finance-book/active or /api/v1/finance-book/active
  * Retrieve active Finance Book ledger with dates, rows, columns, and totals.
+ * Supports optional adminId for Super Admin workspace inspection.
  */
-export async function getActiveFinanceBookApi(): Promise<FinanceBookActiveResponse> {
+export async function getActiveFinanceBookApi(adminId?: string): Promise<FinanceBookActiveResponse> {
   const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
-  const url = `${baseUrl}/api/v1/finance-book/active`;
+  const query = adminId ? `?adminId=${encodeURIComponent(adminId)}` : '';
+  const primaryUrl = `${baseUrl}/api/finance-book/active${query}`;
 
-  const response = await fetch(url, {
+  let response = await fetch(primaryUrl, {
     method: 'GET',
     headers: getAdminAuthHeaders(),
   });
+
+  if (response.status === 404) {
+    const fallbackUrl = `${baseUrl}/api/v1/finance-book/active${query}`;
+    response = await fetch(fallbackUrl, {
+      method: 'GET',
+      headers: getAdminAuthHeaders(),
+    });
+  }
 
   const data = await response.json().catch(() => ({}));
 
@@ -819,19 +851,40 @@ export async function getActiveFinanceBookApi(): Promise<FinanceBookActiveRespon
   return data;
 }
 
-/**
- * POST /api/v1/finance-book/batch-save
- * Save complete staged ledger state (rows, installment columns, payments) atomically.
- */
-export async function batchSaveFinanceBookApi(payload: BatchSaveRequest): Promise<{ success: boolean; message: string; data?: any }> {
-  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
-  const url = `${baseUrl}/api/v1/finance-book/batch-save`;
+export const getActiveLedgerApi = getActiveFinanceBookApi;
 
-  const response = await fetch(url, {
+/**
+ * POST /api/finance-book/batch or /api/v1/finance-book/batch-save
+ * Save complete staged ledger state (rows, installment columns, payments) atomically.
+ * Supports optional adminId for Super Admin tenant scoping.
+ */
+export async function batchSaveFinanceBookApi(payload: BatchSaveRequest, adminId?: string): Promise<{ success: boolean; message: string; data?: any }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const query = adminId ? `?adminId=${encodeURIComponent(adminId)}` : '';
+  const primaryUrl = `${baseUrl}/api/finance-book/batch${query}`;
+
+  let response = await fetch(primaryUrl, {
     method: 'POST',
     headers: getAdminAuthHeaders(),
     body: JSON.stringify(payload),
   });
+
+  if (response.status === 404) {
+    const altUrl = `${baseUrl}/api/finance-book/batch-save${query}`;
+    response = await fetch(altUrl, {
+      method: 'POST',
+      headers: getAdminAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    if (response.status === 404) {
+      const fallbackUrl = `${baseUrl}/api/v1/finance-book/batch-save${query}`;
+      response = await fetch(fallbackUrl, {
+        method: 'POST',
+        headers: getAdminAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+    }
+  }
 
   const data = await response.json().catch(() => ({}));
 
@@ -842,6 +895,8 @@ export async function batchSaveFinanceBookApi(payload: BatchSaveRequest): Promis
 
   return data;
 }
+
+export const batchSaveLedgerApi = batchSaveFinanceBookApi;
 
 /**
  * POST /api/v1/finance-book/columns
@@ -1038,6 +1093,7 @@ export interface GetEmployeesParams {
   status?: 'Active' | 'Inactive';
   page?: number;
   limit?: number;
+  adminId?: string;
 }
 
 export interface CreateEmployeePayload {
@@ -1072,8 +1128,8 @@ export interface UpdateEmployeePayload {
 }
 
 /**
- * GET /api/v1/admin/employees
- * List employees with search, filter, and pagination
+ * GET /api/employees or /api/v1/admin/employees
+ * List employees with search, filter, pagination, and multi-tenant adminId scoping
  */
 export async function getAdminEmployeesApi(params?: GetEmployeesParams): Promise<AdminEmployeesListResponse> {
   const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
@@ -1086,14 +1142,23 @@ export async function getAdminEmployeesApi(params?: GetEmployeesParams): Promise
   if (params?.status && params.status !== ('All' as any)) searchParams.set('status', params.status);
   if (params?.page) searchParams.set('page', String(params.page));
   if (params?.limit) searchParams.set('limit', String(params.limit));
+  if (params?.adminId) searchParams.set('adminId', params.adminId);
 
   const qs = searchParams.toString();
-  const url = `${baseUrl}/api/v1/admin/employees${qs ? `?${qs}` : ''}`;
+  const primaryUrl = `${baseUrl}/api/employees${qs ? `?${qs}` : ''}`;
 
-  const response = await fetch(url, {
+  let response = await fetch(primaryUrl, {
     method: 'GET',
     headers: getAdminAuthHeaders(),
   });
+
+  if (response.status === 404) {
+    const fallbackUrl = `${baseUrl}/api/v1/admin/employees${qs ? `?${qs}` : ''}`;
+    response = await fetch(fallbackUrl, {
+      method: 'GET',
+      headers: getAdminAuthHeaders(),
+    });
+  }
 
   const data = await response.json().catch(() => ({}));
 
@@ -1102,6 +1167,32 @@ export async function getAdminEmployeesApi(params?: GetEmployeesParams): Promise
     throw new Error(errorMsg);
   }
 
+  return data;
+}
+
+/**
+ * GET /api/employees
+ * Retrieve employees with optional adminId for Super Admin inspection
+ */
+export async function getEmployeesApi(adminId?: string) {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const query = adminId ? `?adminId=${encodeURIComponent(adminId)}` : '';
+  let response = await fetch(`${baseUrl}/api/employees${query}`, {
+    method: 'GET',
+    headers: getAdminAuthHeaders(),
+  });
+
+  if (response.status === 404) {
+    response = await fetch(`${baseUrl}/api/v1/admin/employees${query}`, {
+      method: 'GET',
+      headers: getAdminAuthHeaders(),
+    });
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || `Failed to fetch employees (${response.status})`);
+  }
   return data;
 }
 
@@ -1354,6 +1445,105 @@ export async function recordEmployeeCollectionApi(payload: RecordCollectionPaylo
   return data;
 }
 
+export interface EmployeeLedgerBorrowerSummary {
+  id: string;
+  _id?: string;
+  sNo: number;
+  date?: string;
+  borrowDate?: string;
+  nameTelugu: string;
+  nameEnglish?: string;
+  item?: string;
+  productItem?: string;
+  principalAmount?: number;
+  initialRemaining?: number | string;
+  remainingBalance?: number;
+  totalPaid?: number;
+  interestRate?: number;
+  isClosed?: boolean;
+}
+
+export async function searchEmployeeLedgerBorrowersApi(
+  params: string | { query: string; status?: string; limit?: number }
+): Promise<{ success: boolean; data: { borrowers: EmployeeLedgerBorrowerSummary[] } }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  let url = `${baseUrl}/api/v1/employee/borrowers/search`;
+  if (typeof params === 'string') {
+    url += `?q=${encodeURIComponent(params)}`;
+  } else {
+    const queryParts: string[] = [];
+    if (params.query) queryParts.push(`q=${encodeURIComponent(params.query)}`);
+    if (params.status) queryParts.push(`status=${encodeURIComponent(params.status)}`);
+    if (params.limit) queryParts.push(`limit=${encodeURIComponent(String(params.limit))}`);
+    if (queryParts.length > 0) {
+      url += '?' + queryParts.join('&');
+    }
+  }
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: getEmployeeAuthHeaders(),
+  });
+  return response.json().catch(() => ({ success: false, data: { borrowers: [] } }));
+}
+
+export async function getEmployeeLedgerBorrowerDossierApi(borrowerId: string): Promise<any> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const response = await fetch(`${baseUrl}/api/v1/employee/borrowers/${encodeURIComponent(borrowerId)}/dossier`, {
+    method: 'GET',
+    headers: getEmployeeAuthHeaders(),
+  });
+  return response.json().catch(() => ({ success: false }));
+}
+
+export async function recordEmployeeInstallmentPaymentApi(borrowerId: string, payload: any): Promise<any> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const response = await fetch(`${baseUrl}/api/v1/employee/borrowers/${encodeURIComponent(borrowerId)}/payments`, {
+    method: 'POST',
+    headers: getEmployeeAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return response.json().catch(() => ({ success: false }));
+}
+
+export async function toggleEmployeeBorrowerStatusApi(borrowerId: string, isClosed: boolean): Promise<any> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const response = await fetch(`${baseUrl}/api/v1/employee/borrowers/${encodeURIComponent(borrowerId)}/status`, {
+    method: 'PATCH',
+    headers: getEmployeeAuthHeaders(),
+    body: JSON.stringify({ isClosed }),
+  });
+  return response.json().catch(() => ({ success: false }));
+}
+
+export async function getEmployeeExpensesApi(params?: { date?: string }): Promise<any> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const q = params?.date ? `?date=${encodeURIComponent(params.date)}` : '';
+  const response = await fetch(`${baseUrl}/api/v1/employee/expenses${q}`, {
+    method: 'GET',
+    headers: getEmployeeAuthHeaders(),
+  });
+  return response.json().catch(() => ({ success: false, data: { expenses: [] } }));
+}
+
+export async function createEmployeeExpenseApi(payload: any): Promise<any> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const response = await fetch(`${baseUrl}/api/v1/employee/expenses`, {
+    method: 'POST',
+    headers: getEmployeeAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return response.json().catch(() => ({ success: false }));
+}
+
+export async function deleteEmployeeExpenseApi(expenseId: string): Promise<any> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  const response = await fetch(`${baseUrl}/api/v1/employee/expenses/${encodeURIComponent(expenseId)}`, {
+    method: 'DELETE',
+    headers: getEmployeeAuthHeaders(),
+  });
+  return response.json().catch(() => ({ success: false }));
+}
+
 /* ==========================================================================
    ======================= 5. AUDIT LOGS & ACTIVITY TRAIL ====================
    ========================================================================== */
@@ -1491,34 +1681,69 @@ export async function getAuditLogByIdApi(id: string): Promise<SingleAuditLogResp
 }
 
 /**
- * DELETE /api/audit-logs
+ * DELETE /api/audit-logs or /api/audit-logs/clear
  * Permanently clear all audit logs (Super Admin exclusive).
  */
-export async function clearAuditLogsApi(): Promise<{ success: boolean; message: string; deletedCount?: number }> {
+export async function clearAuditLogsApi(
+  confirmation: string = 'CLEAR_ALL_AUDIT_LOGS'
+): Promise<{ success: boolean; message: string; deletedCount?: number }> {
   const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
   const primaryUrl = `${baseUrl}/api/audit-logs`;
+  const token = (confirmation || 'CLEAR_ALL_AUDIT_LOGS').trim();
 
   let response = await fetch(primaryUrl, {
     method: 'DELETE',
     headers: getAdminAuthHeaders(),
+    body: JSON.stringify({ confirmation: token }),
   });
 
-  // Graceful fallback if backend routes are mounted under /api/v1/audit-logs
   if (response.status === 404) {
-    const fallbackUrl = `${baseUrl}/api/v1/audit-logs`;
-    response = await fetch(fallbackUrl, {
+    const clearUrl = `${baseUrl}/api/audit-logs/clear`;
+    response = await fetch(clearUrl, {
+      method: 'DELETE',
+      headers: getAdminAuthHeaders(),
+      body: JSON.stringify({ confirmation: token }),
+    });
+
+    if (response.status === 404) {
+      const fallbackUrl = `${baseUrl}/api/v1/audit-logs`;
+      response = await fetch(fallbackUrl, {
+        method: 'DELETE',
+        headers: getAdminAuthHeaders(),
+        body: JSON.stringify({ confirmation: token }),
+      });
+    }
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || `Failed to clear audit logs (${response.status})`);
+  }
+  return data;
+}
+
+/**
+ * DELETE /api/audit-logs/:id
+ * Delete a single audit log by ID (Super Admin exclusive).
+ */
+export async function deleteSingleAuditLogApi(logId: string): Promise<{ success: boolean; message: string }> {
+  const baseUrl = (API_BASE_URL || '').replace(/\/+$/, '');
+  let response = await fetch(`${baseUrl}/api/audit-logs/${encodeURIComponent(logId)}`, {
+    method: 'DELETE',
+    headers: getAdminAuthHeaders(),
+  });
+
+  if (response.status === 404) {
+    response = await fetch(`${baseUrl}/api/v1/audit-logs/${encodeURIComponent(logId)}`, {
       method: 'DELETE',
       headers: getAdminAuthHeaders(),
     });
   }
 
   const data = await response.json().catch(() => ({}));
-
   if (!response.ok) {
-    const errorMsg = data?.message || data?.error || `Failed to clear audit logs (status ${response.status})`;
-    throw new Error(errorMsg);
+    throw new Error(data?.message || data?.error || 'Failed to delete audit log');
   }
-
   return data;
 }
 

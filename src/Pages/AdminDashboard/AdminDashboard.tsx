@@ -1,18 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import { AdminNavbar } from './components/AdminNavbar';
 import { AdminSidebar, type AdminTab } from './components/AdminSidebar';
-import { Download, RefreshCw, Clock, AlertCircle, Users, Plus, WifiOff, Sparkles } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { RefreshCw, Clock, AlertCircle, Users, Plus, WifiOff, Sparkles } from 'lucide-react';
+
 
 import type { Employee, FinanceRecord } from './types';
 import { DashboardOverview } from './Sidebarpages/DashboardOverview';
 import { EmployeeDirectory } from './Sidebarpages/EmployeeDirectory';
 import { FinanceBook } from './Sidebarpages/FinanceBook';
-import { EmployeePortal } from './Sidebarpages/EmployeePortal';
+
 import { AuditLogs } from './Sidebarpages/AuditLogs';
 import { AdminNotifications } from './Sidebarpages/AdminNotifications';
-import { getAdminEmployeesApi, notificationApi } from '../../lib/api';
+import {
+  getAdminEmployeesApi,
+  notificationApi,
+  isAdminAuthenticated,
+  isSuperAdminAuthenticated,
+  adminLogout
+} from '../../lib/api';
 
 interface AdminDashboardProps {
   userName: string;
@@ -45,6 +51,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  // Session expiry and redirect handler
+  const isRedirectingRef = useRef(false);
+  const handleSessionExpired = useCallback((message = 'Session expired. Please sign in again to continue.') => {
+    if (isRedirectingRef.current) return;
+    isRedirectingRef.current = true;
+    adminLogout();
+    if (onLogout) {
+      onLogout();
+    }
+    onShowToast(message);
+    navigate('/?login=admin', { replace: true });
+  }, [navigate, onLogout, onShowToast]);
+
+  // Verify authentication immediately on mount
+  useEffect(() => {
+    const isAuth = isAdminAuthenticated() || isSuperAdminAuthenticated();
+    if (!isAuth) {
+      handleSessionExpired('Session expired or login required. Please sign in as Administrator.');
+    }
+  }, [handleSessionExpired]);
+
+  // Global listener for auth expired events dispatched by API callers or tabs
+  useEffect(() => {
+    const onAuthExpired = (e: any) => {
+      const msg = e?.detail?.message || 'Your session has expired. Please sign in again.';
+      handleSessionExpired(msg);
+    };
+    window.addEventListener('kn_auth_expired', onAuthExpired);
+    return () => window.removeEventListener('kn_auth_expired', onAuthExpired);
+  }, [handleSessionExpired]);
+
+  // Periodic session token expiration check
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const isAuth = isAdminAuthenticated() || isSuperAdminAuthenticated();
+      if (!isAuth) {
+        handleSessionExpired('Your session has expired. Please sign in again.');
+      }
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [handleSessionExpired]);
+
   // Shared Employee State from Cloud Backend
   const [employeesList, setEmployeesList] = useState<Employee[]>([]);
   const [isLoadingEmployees, setIsLoadingEmployees] = useState<boolean>(true);
@@ -56,11 +104,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
 
   const fetchUnreadNotifications = async () => {
+    const isAuth = isAdminAuthenticated() || isSuperAdminAuthenticated();
+    if (!isAuth) {
+      handleSessionExpired('Session expired. Please sign in again.');
+      return;
+    }
     try {
       const count = await notificationApi.getUnreadCount();
       setUnreadNotificationsCount(count);
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed to fetch unread notification count:', err);
+      if (
+        err?.message?.includes('401') ||
+        err?.message?.toLowerCase().includes('expired token') ||
+        err?.message?.toLowerCase().includes('unauthorized')
+      ) {
+        handleSessionExpired('Your admin session has expired. Please sign in again.');
+      }
     }
   };
 
@@ -88,6 +148,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Fetch staff registry from cloud backend (GET /api/v1/admin/employees)
   const fetchDashboardEmployees = async () => {
+    const isAuth = isAdminAuthenticated() || isSuperAdminAuthenticated();
+    if (!isAuth) {
+      handleSessionExpired('Session expired. Please sign in again.');
+      return;
+    }
     setIsLoadingEmployees(true);
     setEmployeeLoadError(null);
     setEmployeeLoadSeconds(0);
@@ -116,6 +181,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
     } catch (err: any) {
       console.warn('Dashboard employee fetch notice:', err.message);
+      if (
+        err?.message?.includes('401') ||
+        err?.message?.toLowerCase().includes('expired token') ||
+        err?.message?.toLowerCase().includes('unauthorized')
+      ) {
+        handleSessionExpired('Your admin session has expired. Please sign in again.');
+        return;
+      }
       setEmployeeLoadError(err.message || 'Failed to fetch employee registry from server.');
     } finally {
       setIsLoadingEmployees(false);
@@ -133,110 +206,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const totalCount = employeesList.length;
   const financeCount = financeRecordsList.length;
 
-  const handleExportData = () => {
-    try {
-      const dateStamp = new Date().toISOString().split('T')[0];
-      const wb = XLSX.utils.book_new();
 
-      if (activeTab === 'employees') {
-        const empHeaders = [
-          'Employee ID',
-          'Full Name',
-          'Age',
-          'Phone',
-          'Alternative Phone',
-          'Aadhar Card',
-          'Gmail',
-          'PAN Card',
-          'Village',
-          'Assigned Area',
-          'Reference Member',
-          'Relationship',
-          'Joining Date',
-          'Status'
-        ];
-
-        const empRows = employeesList.map(emp => [
-          emp.id,
-          emp.name,
-          emp.age,
-          emp.phone,
-          emp.altPhone || '',
-          emp.aadharCard,
-          emp.gmail,
-          emp.panCard,
-          emp.village,
-          emp.assignedArea,
-          emp.referenceName || '',
-          emp.relationshipToReference || '',
-          emp.joiningDate,
-          emp.status
-        ]);
-
-        const ws = XLSX.utils.aoa_to_sheet([empHeaders, ...empRows]);
-        XLSX.utils.book_append_sheet(wb, ws, 'Employees');
-        XLSX.writeFile(wb, `KN_Finance_Employee_Directory_${dateStamp}.xlsx`);
-        onShowToast(`Exported ${employeesList.length} employee records to Excel! 📊`);
-      } else if (activeTab === 'finance_book') {
-        if (financeRecordsList.length === 0) {
-          onShowToast('No finance book records currently loaded to export.');
-          return;
-        }
-        const finHeaders = [
-          'S.No',
-          'Loan ID',
-          'Borrower Name',
-          'Reference Name',
-          'Start Date',
-          'Principal Amount (₹)',
-          'Total With Interest (₹)',
-          'Payment Process',
-          'Total Payments Count',
-          'Status'
-        ];
-
-        const finRows = financeRecordsList.map(rec => [
-          rec.sNo,
-          rec.id,
-          rec.name,
-          rec.referenceName || '',
-          rec.startDate,
-          rec.principalAmount,
-          rec.totalWithInterest,
-          rec.paymentProcess,
-          rec.payments ? rec.payments.length : 0,
-          rec.isClosed ? 'Closed' : 'Active'
-        ]);
-
-        const ws = XLSX.utils.aoa_to_sheet([finHeaders, ...finRows]);
-        XLSX.utils.book_append_sheet(wb, ws, 'Finance Records');
-        XLSX.writeFile(wb, `KN_Finance_Records_${dateStamp}.xlsx`);
-        onShowToast(`Exported ${financeRecordsList.length} finance book records to Excel! 📊`);
-      } else {
-        const overviewData = [
-          ['KN FINANCE - BRANCH OPERATIONS OVERVIEW'],
-          [`Generated on: ${new Date().toLocaleString('en-IN')}`],
-          [],
-          ['Metric', 'Value'],
-          ['Total Revenue', '₹12,45,800'],
-          ['Today Generated Amount', '₹48,200'],
-          ['Monthly Maintenance', '₹95,000'],
-          ['Total Registered Employees', employeesList.length],
-          ['Active Employees', employeesList.filter(e => e.status === 'Active').length],
-          ['Inactive Employees', employeesList.filter(e => e.status === 'Inactive').length],
-          ['Total Finance Records', financeRecordsList.length],
-        ];
-
-        const ws = XLSX.utils.aoa_to_sheet(overviewData);
-        XLSX.utils.book_append_sheet(wb, ws, 'Overview');
-        XLSX.writeFile(wb, `KN_Finance_Branch_Overview_${dateStamp}.xlsx`);
-        onShowToast('Exported branch overview telemetry to Excel! 📊');
-      }
-    } catch (err) {
-      console.error('Failed to export page data:', err);
-      onShowToast('Failed to export data.');
-    }
-  };
 
   return (
     <div className="h-screen bg-[#F5F9E8] text-[#0F172A] flex flex-col font-sans overflow-hidden">
@@ -280,7 +250,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {activeTab === 'overview' && 'Admin Control Overview'}
                 {activeTab === 'employees' && 'Employee Registry & Lifecycle'}
                 {activeTab === 'finance_book' && 'Finance Ledger Book '}
-                {activeTab === 'employee_portal' && 'Field Officer & Borrower Route Portal'}
+
                 {activeTab === 'audit_logs' && 'Centralized Audit Logs'}
                 {activeTab === 'notifications' && 'System Notifications & Advisories'}
               </h1>
@@ -288,21 +258,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {activeTab === 'overview' && 'Monitor branch liquidity, revenues, and general deployment telemetry.'}
                 {activeTab === 'employees' && 'View, add, edit, or delete staff records, manage credentials, and assign operational areas.'}
                 {activeTab === 'finance_book' && 'Manage installment columns, borrower ledger rows, and batch-sync ledger state.'}
-                {activeTab === 'employee_portal' && 'Simulate or operate field collections, verify borrower balances, and generate instant receipts.'}
+
                 {activeTab === 'audit_logs' && 'Immutable audit trail of administrator and system activities.'}
                 {activeTab === 'notifications' && 'Review broadcast advisories, account status updates, and license expiry alerts from Super Admin.'}
               </p>
             </div>
 
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleExportData}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#166534] hover:bg-[#14532d] text-white text-xs font-extrabold transition-all shadow-sm"
-              >
-                <Download className="w-3.5 h-3.5 text-[#D4A017]" />
-                <span>Export Page Data</span>
-              </button>
-            </div>
+
           </div>
 
           {/* Staff Registry Sync Banner when records already exist */}
@@ -475,13 +437,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             />
           )}
 
-          {activeTab === 'employee_portal' && (
-            <EmployeePortal
-              employees={employeesList}
-              userName={userName}
-              onShowToast={onShowToast}
-            />
-          )}
+
 
           {activeTab === 'audit_logs' && (
             <AuditLogs

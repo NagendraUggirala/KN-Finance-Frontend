@@ -26,6 +26,7 @@ import {
   getAuditLogsApi,
   getAuditLogByIdApi,
   clearAuditLogsApi,
+  deleteSingleAuditLogApi,
   type AuditLogItem,
   type AuditLogsQueryParams
 } from '../../../lib/api';
@@ -36,142 +37,6 @@ interface AuditLogsProps {
   isSuperAdmin?: boolean;
 }
 
-// Fallback audit log data for immediate rich preview if backend database is cold/empty
-const SAMPLE_AUDIT_LOGS: AuditLogItem[] = [
-  {
-    _id: 'log-8077fa4fc1ca09a6',
-    userId: 'admin001',
-    userRole: 'admin',
-    action: 'UPDATE',
-    entityType: 'Employee',
-    entityId: 'EMP-2026-004',
-    details: {
-      employeeId: 'EMP2026004',
-      changedFields: ['phone', 'village', 'assignedOperationalArea'],
-      before: { phone: '9876543211', village: 'Ravulapalem', assignedOperationalArea: 'Sector East' },
-      after: { phone: '9123456780', village: 'Narsapuram', assignedOperationalArea: 'Sector West' }
-    },
-    ipAddress: '192.168.1.104',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128.0.0.0 Safari/537.36',
-    createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString()
-  },
-  {
-    _id: 'log-8077fa4fc1ca09a7',
-    userId: 'superadmin_main',
-    userRole: 'superadmin',
-    action: 'CREATE',
-    entityType: 'Employee',
-    entityId: 'EMP-2026-008',
-    details: {
-      employeeId: 'EMP2026008',
-      name: 'Venkatesh Rao',
-      phone: '9440123456',
-      assignedOperationalArea: 'North Sector',
-      joiningDate: '2026-09-29'
-    },
-    ipAddress: '103.21.144.62',
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15',
-    createdAt: new Date(Date.now() - 25 * 60 * 1000).toISOString()
-  },
-  {
-    _id: 'log-8077fa4fc1ca09a8',
-    userId: 'emp_rajesh',
-    userRole: 'employee',
-    action: 'STATUS_CHANGE',
-    entityType: 'LedgerBorrowerRow',
-    entityId: 'BOR-1002',
-    details: {
-      borrowerName: 'ఎం. పార్వతి (M. Parvathi)',
-      previousStatus: 'Active',
-      newStatus: 'Closed',
-      closedBalance: 0,
-      remarks: 'All 8 weekly installments cleared in full'
-    },
-    ipAddress: '157.48.22.90',
-    userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile Safari/537.36',
-    createdAt: new Date(Date.now() - 65 * 60 * 1000).toISOString()
-  },
-  {
-    _id: 'log-8077fa4fc1ca09a9',
-    userId: 'unknown_guest',
-    userRole: 'admin',
-    action: 'LOGIN_FAILED',
-    entityType: 'Auth',
-    entityId: 'AUTH-FAIL-88',
-    details: {
-      attemptedEmail: 'admin.finance@kncorp.com',
-      reason: 'Invalid credentials - Password mismatch (3rd attempt)',
-      ipBlocked: false
-    },
-    ipAddress: '49.37.112.5',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Firefox/130.0',
-    createdAt: new Date(Date.now() - 110 * 60 * 1000).toISOString()
-  },
-  {
-    _id: 'log-8077fa4fc1ca09aa',
-    userId: 'admin001',
-    userRole: 'admin',
-    action: 'LOGIN',
-    entityType: 'Auth',
-    entityId: 'AUTH-SESS-9102',
-    details: {
-      loginMethod: 'Email/Password + JWT',
-      branch: 'NY-Central-01',
-      sessionDurationHours: 8
-    },
-    ipAddress: '192.168.1.104',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128.0.0.0 Safari/537.36',
-    createdAt: new Date(Date.now() - 180 * 60 * 1000).toISOString()
-  },
-  {
-    _id: 'log-8077fa4fc1ca09ab',
-    userId: 'superadmin_main',
-    userRole: 'superadmin',
-    action: 'ADD_COLUMN',
-    entityType: 'FinanceBook',
-    entityId: 'BOOK-2026-AUG',
-    details: {
-      columnDate: '15-09',
-      columnIndex: 5,
-      affectedRowsCount: 42
-    },
-    ipAddress: '103.21.144.62',
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15',
-    createdAt: new Date(Date.now() - 320 * 60 * 1000).toISOString()
-  },
-  {
-    _id: 'log-8077fa4fc1ca09ac',
-    userId: 'superadmin_main',
-    userRole: 'superadmin',
-    action: 'PASSWORD_RESET',
-    entityType: 'Admin',
-    entityId: 'ADM-2026-002',
-    details: {
-      targetAdminEmail: 'suresh.kumar@knfinance.in',
-      requestedBy: 'Super Admin Security Portal',
-      temporaryPasswordSent: true
-    },
-    ipAddress: '103.21.144.62',
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15',
-    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-  },
-  {
-    _id: 'log-8077fa4fc1ca09ad',
-    userId: 'admin001',
-    userRole: 'admin',
-    action: 'DELETE',
-    entityType: 'LedgerBorrowerRow',
-    entityId: 'BOR-1019',
-    details: {
-      deletedRowSNo: 19,
-      borrowerNameTelugu: 'ఎస్. నరేష్ (S. Naresh)',
-      reason: 'Duplicate entry entered erroneously'
-    },
-    ipAddress: '192.168.1.104',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128.0.0.0 Safari/537.36',
-    createdAt: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString()
-  }
-];
 
 export const AuditLogs: React.FC<AuditLogsProps> = ({
   userName = 'Admin',
@@ -241,57 +106,40 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({
           setTotalRecords(response.pagination?.totalRecords || response.data.length);
           setTotalPages(response.pagination?.totalPages || Math.ceil((response.pagination?.totalRecords || response.data.length) / limit));
         } else {
-          // If server returned 0 records and no filters active, check fallback
-          if (!debouncedSearch && selectedAction === 'ALL' && selectedEntity === 'ALL' && !startDate && !endDate) {
-            setLogs(SAMPLE_AUDIT_LOGS);
-            setTotalRecords(SAMPLE_AUDIT_LOGS.length);
-            setTotalPages(1);
-          } else {
-            setLogs([]);
-            setTotalRecords(0);
-            setTotalPages(1);
-          }
+          // Correct empty database state: do NOT inject SAMPLE_AUDIT_LOGS
+          setLogs([]);
+          setTotalRecords(0);
+          setTotalPages(1);
         }
       } else {
-        // Fallback to sample data for demo/preview
-        setLogs(SAMPLE_AUDIT_LOGS);
-        setTotalRecords(SAMPLE_AUDIT_LOGS.length);
+        setLogs([]);
+        setTotalRecords(0);
         setTotalPages(1);
       }
       setLastSynced(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } catch (err: any) {
-      console.warn('Backend audit logs fetch error, falling back to cached sample logs:', err.message);
-      // Filter the sample data locally so UI remains interactive even offline
-      let filtered = [...SAMPLE_AUDIT_LOGS];
-
-      if (debouncedSearch.trim()) {
-        const q = debouncedSearch.toLowerCase();
-        filtered = filtered.filter(l =>
-          l.userId.toLowerCase().includes(q) ||
-          (l.entityId || '').toLowerCase().includes(q) ||
-          l.action.toLowerCase().includes(q) ||
-          (l.ipAddress || '').includes(q) ||
-          l.entityType.toLowerCase().includes(q)
-        );
-      }
-      if (selectedAction !== 'ALL') {
-        filtered = filtered.filter(l => l.action === selectedAction);
-      }
-      if (selectedEntity !== 'ALL') {
-        filtered = filtered.filter(l => l.entityType === selectedEntity);
-      }
-      if (selectedRole !== 'ALL') {
-        filtered = filtered.filter(l => (l.userRole || '').toLowerCase() === selectedRole.toLowerCase());
-      }
-
-      setLogs(filtered);
-      setTotalRecords(filtered.length);
-      setTotalPages(Math.max(1, Math.ceil(filtered.length / limit)));
-      setFetchError(err.message || 'Connecting to backend audit service (operating with cached audit trail).');
+      console.warn('Backend audit logs fetch notice:', err.message);
+      setFetchError(err.message || 'Connecting to backend audit service.');
+      setLogs([]);
+      setTotalRecords(0);
+      setTotalPages(1);
     } finally {
       setIsLoading(false);
     }
   }, [page, limit, debouncedSearch, selectedAction, selectedEntity, selectedRole, startDate, endDate]);
+
+  // Delete single audit log entry (Super Admin exclusive)
+  const handleDeleteSingleLog = async (logId: string) => {
+    if (!window.confirm('Are you sure you want to permanently delete this audit log record?')) return;
+    try {
+      await deleteSingleAuditLogApi(logId);
+      onShowToast('Audit log record deleted successfully.');
+      setLogs(prev => prev.filter(l => l._id !== logId));
+      setTotalRecords(prev => Math.max(0, prev - 1));
+    } catch (err: any) {
+      onShowToast(err?.message || 'Failed to delete audit log entry.');
+    }
+  };
 
   // Trigger fetch when parameters change
   useEffect(() => {
@@ -970,17 +818,29 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({
                       </div>
                     </td>
 
-                    {/* 7. Action Button: View Details */}
+                    {/* 7. Action Button: View Details & Single Delete (Super Admin exclusive) */}
                     <td className="py-3 px-4 text-center">
-                      <button
-                        type="button"
-                        onClick={() => handleViewDetail(log)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-[#166534] hover:text-white text-slate-700 text-xs font-bold transition-all shadow-2xs group-hover:bg-[#166534] group-hover:text-white cursor-pointer"
-                        title="View Full Audit Log Details"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Details</span>
-                      </button>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleViewDetail(log)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-[#166534] hover:text-white text-slate-700 text-xs font-bold transition-all shadow-2xs group-hover:bg-[#166534] group-hover:text-white cursor-pointer"
+                          title="View Full Audit Log Details"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Details</span>
+                        </button>
+                        {isSuperAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSingleLog(log._id)}
+                            className="p-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white transition-colors cursor-pointer"
+                            title="Permanently delete this audit log entry"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1335,7 +1195,7 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({
                 onClick={async () => {
                   try {
                     setIsClearing(true);
-                    const res = await clearAuditLogsApi();
+                    const res = await clearAuditLogsApi(clearConfirmInput.trim() || 'CLEAR');
                     onShowToast(res?.message || 'Audit trail permanently cleared by Super Admin.');
                     setIsClearModalOpen(false);
                     setClearConfirmInput('');

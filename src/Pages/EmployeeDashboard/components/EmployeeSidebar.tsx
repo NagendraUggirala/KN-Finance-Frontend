@@ -8,7 +8,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ArrowLeft,
-  MapPin
+  MapPin,
+  X
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { EmployeeTab, EmployeeProfile } from '../types';
@@ -78,7 +79,7 @@ export const EmployeeSidebar: React.FC<EmployeeSidebarProps> = ({
 
   return (
     <>
-      {/* Mobile Backdrop Overlay */}
+      {/* Mobile Backdrop Overlay (behind sidebar) */}
       {isOpen && (
         <div
           onClick={onCloseMobile}
@@ -86,14 +87,17 @@ export const EmployeeSidebar: React.FC<EmployeeSidebarProps> = ({
         />
       )}
 
+      {/* Sidebar Drawer: z-50 on mobile so it is above backdrop and navbar */}
       <aside
-        className={`fixed lg:static top-0 bottom-0 left-0 z-30 lg:z-auto bg-white border-r border-slate-200 flex flex-col justify-between transition-all duration-300 transform ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-          } ${isCollapsed ? 'w-64 lg:w-20' : 'w-64 lg:w-64'}`}
+        className={`fixed lg:static top-0 bottom-0 left-0 z-50 lg:z-auto bg-white border-r border-slate-200 flex flex-col justify-between transition-all duration-300 transform shadow-2xl lg:shadow-none ${
+          isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        } ${isCollapsed ? 'w-64 lg:w-20' : 'w-64 lg:w-64'}`}
       >
         {/* Top Brand Banner */}
         <div
-          className={`p-4 border-b border-slate-100 flex items-center justify-between transition-all duration-300 ${isCollapsed ? 'flex-col gap-3 px-2' : 'px-4'
-            }`}
+          className={`p-4 border-b border-slate-100 flex items-center justify-between transition-all duration-300 ${
+            isCollapsed ? 'flex-col gap-3 px-2' : 'px-4'
+          }`}
         >
           <div className={`flex items-center gap-3 ${isCollapsed ? 'flex-col' : ''}`}>
             <div className="w-10 h-10 min-w-10 rounded-xl bg-[#166534] flex items-center justify-center shadow-md">
@@ -115,10 +119,19 @@ export const EmployeeSidebar: React.FC<EmployeeSidebarProps> = ({
 
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors duration-150 hidden lg:block"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors duration-150 hidden lg:block cursor-pointer"
             title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
           >
             {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+          </button>
+
+          <button
+            onClick={onCloseMobile}
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors duration-150 lg:hidden cursor-pointer"
+            title="Close Sidebar"
+            aria-label="Close Sidebar"
+          >
+            <X className="w-5 h-5" />
           </button>
         </div>
 

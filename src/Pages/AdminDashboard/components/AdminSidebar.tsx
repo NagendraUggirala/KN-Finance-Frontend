@@ -7,13 +7,14 @@ import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
-  UserCheck,
+
   ShieldCheck,
-  Bell
+  Bell,
+  X
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-export type AdminTab = 'overview' | 'employees' | 'finance_book' | 'employee_portal' | 'audit_logs' | 'notifications';
+export type AdminTab = 'overview' | 'employees' | 'finance_book' | 'audit_logs' | 'notifications';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -41,14 +42,14 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
     { id: 'overview' as AdminTab, label: 'Dashboard Overview', icon: LayoutDashboard },
     { id: 'employees' as AdminTab, label: 'Employee Registry', icon: Users, badge: employeeCount.toString() },
     { id: 'finance_book' as AdminTab, label: 'Finance Book ', icon: BookOpen, badge: financeCount.toString() },
-    { id: 'employee_portal' as AdminTab, label: 'Employee Portal', icon: UserCheck, badge: 'Field' },
+
     { id: 'audit_logs' as AdminTab, label: 'Audit Logs', icon: ShieldCheck, badge: 'Logs' },
     { id: 'notifications' as AdminTab, label: 'Notifications', icon: Bell, badge: unreadCount > 0 ? `${unreadCount}` : undefined },
   ];
 
   return (
     <>
-      {/* Mobile Backdrop Overlay */}
+      {/* Mobile Backdrop Overlay (behind sidebar) */}
       {isOpen && (
         <div
           onClick={onCloseMobile}
@@ -56,9 +57,11 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
         />
       )}
 
+      {/* Sidebar Drawer: z-50 on mobile so it is above backdrop and navbar */}
       <aside
-        className={`fixed lg:static top-0 bottom-0 left-0 z-30 lg:z-auto bg-[#F2F8E1] text-[#0F172A] border-r border-[#C5E1A5] flex flex-col justify-between transition-all duration-300 transform ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-          } ${isCollapsed ? 'w-64 lg:w-20' : 'w-64 lg:w-64'}`}
+        className={`fixed lg:static top-0 bottom-0 left-0 z-50 lg:z-auto bg-[#F2F8E1] text-[#0F172A] border-r border-[#C5E1A5] flex flex-col justify-between transition-all duration-300 transform shadow-2xl lg:shadow-none ${
+          isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        } ${isCollapsed ? 'w-64 lg:w-20' : 'w-64 lg:w-64'}`}
       >
         {/* Top Brand Banner */}
         <div className={`p-4 border-b border-[#C5E1A5] flex items-center justify-between transition-all duration-300 ${isCollapsed ? 'flex-col gap-3 px-2' : 'px-4'}`}>
@@ -82,6 +85,15 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
             title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           >
             {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+          </button>
+
+          <button
+            onClick={onCloseMobile}
+            className="p-1.5 rounded-lg text-slate-700 hover:text-slate-900 hover:bg-[#DCECB5] transition-colors duration-150 lg:hidden cursor-pointer"
+            title="Close Sidebar"
+            aria-label="Close Sidebar"
+          >
+            <X className="w-5 h-5" />
           </button>
         </div>
 
@@ -117,11 +129,10 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
                 </div>
 
                 {!isCollapsed && item.badge && (
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${
-                    item.id === 'notifications' && unreadCount > 0
-                      ? 'bg-red-600 text-white font-bold animate-pulse'
-                      : isActive ? 'bg-white/20 text-white' : 'bg-[#DCECB5] text-[#166534] font-bold'
-                  }`}>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${item.id === 'notifications' && unreadCount > 0
+                    ? 'bg-red-600 text-white font-bold animate-pulse'
+                    : isActive ? 'bg-white/20 text-white' : 'bg-[#DCECB5] text-[#166534] font-bold'
+                    }`}>
                     {item.badge}
                   </span>
                 )}

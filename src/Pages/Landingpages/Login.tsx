@@ -12,12 +12,8 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  Sparkles,
-  Shield,
-  Smartphone,
   Check,
-  User,
-  Crown
+  User
 } from 'lucide-react';
 import {
   forgotPasswordApi,
@@ -96,13 +92,6 @@ export const Login: React.FC<LoginProps> = ({
   }, [isOpen]);
 
   if (!isOpen) return null;
-
-  // Quick fill helper for development/testing
-  const handleQuickFill = (testEmail: string, testPass: string) => {
-    setEmail(testEmail);
-    setPassword(testPass);
-    setLoginError(null);
-  };
 
   /**
    * Unified Login Handler:
